@@ -50,8 +50,9 @@ class DepotMonitorApp(tk.Tk):
         self.show_warnings = tk.BooleanVar(value=True)
 
         self.warning_text = tk.StringVar(value="No warnings")
-        self.occupancy_text = tk.StringVar(value="")
         self.truck_zone_state: dict[str, str] = {k: "free" for k in TRUCK_ZONE_KEYS}
+        self.depot_rect_items: dict[str, int] = {}
+        self.depot_text_items: dict[str, int] = {}
 
         self.edit_mode = False
         self.edit_zone_name = tk.StringVar(value=list(self.zones.keys())[0])
@@ -63,7 +64,7 @@ class DepotMonitorApp(tk.Tk):
         if not self.connect_camera(self.active_camera_index) and self.available_camera_indices:
             self.connect_camera(self.available_camera_indices[0])
         self.refresh_rfid_table()
-        self.update_occupancy_text({k: False for k in TRUCK_ZONE_KEYS})
+        self.update_depot_indicators()
 
         self.protocol("WM_DELETE_WINDOW", self.on_close)
         self.after(10, self.update_frame)
@@ -129,10 +130,12 @@ class DepotMonitorApp(tk.Tk):
         )
         ttk.Label(right, textvariable=self.warning_text, foreground="red").grid(row=2, column=0, sticky="w")
 
-        ttk.Label(right, text="Truck occupancy", font=("Segoe UI", 11, "bold")).grid(
+        ttk.Label(right, text="Depot status", font=("Segoe UI", 11, "bold")).grid(
             row=3, column=0, sticky="w", pady=(8, 0)
         )
-        ttk.Label(right, textvariable=self.occupancy_text).grid(row=4, column=0, sticky="w")
+        self.depot_canvas = tk.Canvas(right, width=360, height=78, bg="#f5f5f5", highlightthickness=0)
+        self.depot_canvas.grid(row=4, column=0, sticky="ew")
+        self._build_depot_indicators()
 
         zone_frame = ttk.LabelFrame(right, text="Zone editor", padding=8)
         zone_frame.grid(row=5, column=0, sticky="ew", pady=(10, 0))
@@ -248,9 +251,6 @@ class DepotMonitorApp(tk.Tk):
             cap = cv2.VideoCapture(idx, cv2.CAP_DSHOW)
             if not cap.isOpened():
                 cap.release()
-                cap = cv2.VideoCapture(idx)
-            if not cap.isOpened():
-                cap.release()
                 continue
             ok, _ = cap.read()
             cap.release()
@@ -274,9 +274,6 @@ class DepotMonitorApp(tk.Tk):
 
     def _open_camera(self, index: int):
         cap = cv2.VideoCapture(index, cv2.CAP_DSHOW)
-        if not cap.isOpened():
-            cap.release()
-            cap = cv2.VideoCapture(index)
         if not cap.isOpened():
             cap.release()
             return None
@@ -317,16 +314,40 @@ class DepotMonitorApp(tk.Tk):
         if not self.connect_camera(index):
             messagebox.showerror("Camera", f"Could not open camera {index}")
 
-    def update_occupancy_text(self, occupancy: dict[str, bool]) -> None:
-        lines = []
+    def _build_depot_indicators(self) -> None:
+        box_w = 105
+        box_h = 44
+        gap = 12
+        start_x = 10
+        y = 18
+        for idx, key in enumerate(TRUCK_ZONE_KEYS):
+            x1 = start_x + idx * (box_w + gap)
+            y1 = y
+            x2 = x1 + box_w
+            y2 = y1 + box_h
+            rect_id = self.depot_canvas.create_rectangle(x1, y1, x2, y2, fill="#d9534f", outline="#303030", width=2)
+            text_id = self.depot_canvas.create_text(
+                (x1 + x2) // 2,
+                (y1 + y2) // 2,
+                text=key.replace("truck_space_", "Depo "),
+                fill="#111111",
+                font=("Segoe UI", 10, "bold"),
+            )
+            self.depot_rect_items[key] = rect_id
+            self.depot_text_items[key] = text_id
+
+    def update_depot_indicators(self) -> None:
+        color_map = {
+            "occupied": "#2eaf4a",  # green
+            "warning": "#ffd451",   # yellow
+            "free": "#d9534f",      # red
+        }
         for key in TRUCK_ZONE_KEYS:
             state = self.truck_zone_state.get(key, "free")
-            if state == "warning":
-                status = "warning"
-            else:
-                status = "occupied" if occupancy.get(key, False) else "free"
-            lines.append(f"{key}: {status}")
-        self.occupancy_text.set(" | ".join(lines))
+            color = color_map.get(state, "#d9534f")
+            rect_id = self.depot_rect_items.get(key)
+            if rect_id is not None:
+                self.depot_canvas.itemconfig(rect_id, fill=color)
 
     def update_frame(self) -> None:
         if not self.running:
@@ -351,7 +372,7 @@ class DepotMonitorApp(tk.Tk):
 
         eval_data = self.detector.evaluate(self.current_detections, self.zones)
         self.truck_zone_state = eval_data["truck_zone_state"]
-        self.update_occupancy_text(eval_data["truck_occupancy"])
+        self.update_depot_indicators()
         warnings = eval_data["warnings"]
         self.warning_text.set(", ".join(warnings) if warnings else "No warnings")
 
