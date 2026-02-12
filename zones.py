@@ -10,15 +10,13 @@ Box = List[int]
 ZoneMap = Dict[str, Box]
 
 TRUCK_ZONE_KEYS = ("truck_space_1", "truck_space_2", "truck_space_3")
-WARNING_ZONE_KEYS = ("warn_car", "warn_person", "warn_other")
+WARNING_ZONE_KEYS = ("warn_car",)
 
 DEFAULT_ZONES: ZoneMap = {
     "truck_space_1": [40, 260, 300, 520],
     "truck_space_2": [330, 260, 620, 520],
     "truck_space_3": [650, 260, 930, 520],
     "warn_car": [0, 0, 960, 540],
-    "warn_person": [0, 0, 960, 540],
-    "warn_other": [0, 0, 960, 540],
 }
 
 
@@ -63,4 +61,3 @@ def save_zones(path: str, zones: ZoneMap) -> None:
     zone_file = Path(path)
     serializable = {key: [int(v) for v in box] for key, box in zones.items()}
     zone_file.write_text(json.dumps(serializable, indent=2), encoding="utf-8")
-

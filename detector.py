@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Dict, List
+from typing import Dict, List, Sequence
 
 from ultralytics import YOLO
 
@@ -19,10 +19,17 @@ class Detection:
 
 
 class DepotDetector:
-    def __init__(self, model_path: str, conf_threshold: float, img_size: int) -> None:
+    def __init__(
+        self,
+        model_path: str,
+        conf_threshold: float,
+        img_size: int,
+        allowed_labels: Sequence[str] | None = None,
+    ) -> None:
         self.model = YOLO(model_path)
         self.conf_threshold = conf_threshold
         self.img_size = img_size
+        self.allowed_labels = {label.lower() for label in (allowed_labels or [])}
 
     def detect(self, frame) -> List[Detection]:
         result = self.model(frame, imgsz=self.img_size, conf=self.conf_threshold, verbose=False)[0]
@@ -40,6 +47,8 @@ class DepotDetector:
             cx = int((x1 + x2) / 2)
             cy = int((y1 + y2) / 2)
             label = str(self.model.names.get(cls_idx, cls_idx)).lower()
+            if self.allowed_labels and label not in self.allowed_labels:
+                continue
             detections.append(
                 Detection(
                     label=label,
@@ -73,10 +82,6 @@ class DepotDetector:
                 continue
             if det.label == "car" and point_in_box(x, y, zones["warn_car"]):
                 warning_messages.append("car detected")
-            elif det.label == "person" and point_in_box(x, y, zones["warn_person"]):
-                warning_messages.append("people in depot")
-            elif point_in_box(x, y, zones["warn_other"]):
-                warning_messages.append("warning, object in depot")
 
         unique_warnings = list(dict.fromkeys(warning_messages))
         zone_state: Dict[str, str] = {}

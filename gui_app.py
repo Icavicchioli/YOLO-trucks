@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 import time
 import tkinter as tk
 from tkinter import messagebox, ttk
@@ -10,8 +11,10 @@ import cv2
 from PIL import Image, ImageTk
 
 from app_config import (
+    ALLOWED_LABELS,
     CAMERA_INDEX,
     CONF_THRESHOLD,
+    DETECTION_TTL_FRAMES,
     FRAME_HEIGHT,
     FRAME_WIDTH,
     IMG_SIZE,
@@ -26,12 +29,21 @@ from rfid_log import add_rfid_event, read_rfid_events
 from zones import DEFAULT_ZONES, TRUCK_ZONE_KEYS, load_zones, normalize_box, save_zones
 
 
+@dataclass
+class DetectionTrack:
+    detection: Detection
+    ttl_frames: int
+
+
 class DepotMonitorApp(tk.Tk):
     def __init__(self) -> None:
         super().__init__()
         self.title(WINDOW_TITLE)
+        self._configure_opencv_logging()
 
-        self.detector = DepotDetector(MODEL_PATH, CONF_THRESHOLD, IMG_SIZE)
+        self.detector = DepotDetector(MODEL_PATH, CONF_THRESHOLD, IMG_SIZE, ALLOWED_LABELS)
+        self.detection_ttl_frames = max(1, DETECTION_TTL_FRAMES)
+        self.active_detection_tracks: list[DetectionTrack] = []
         self.zones = load_zones(ZONES_PATH, FRAME_WIDTH, FRAME_HEIGHT)
 
         self.cap = None
@@ -245,17 +257,41 @@ class DepotMonitorApp(tk.Tk):
         for row in read_rfid_events(RFID_LOG_PATH, limit=250):
             self.rfid_tree.insert("", tk.END, values=(row["timestamp"], row["event"], row["tag_id"], row["notes"]))
 
+    @staticmethod
+    def _configure_opencv_logging() -> None:
+        # Avoid noisy backend probing warnings on startup.
+        try:
+            cv2.setLogLevel(cv2.LOG_LEVEL_ERROR)
+            return
+        except Exception:
+            pass
+        try:
+            cv2.utils.logging.setLogLevel(cv2.utils.logging.LOG_LEVEL_ERROR)
+        except Exception:
+            pass
+
+    @staticmethod
+    def _camera_backends() -> list[int]:
+        backends: list[int] = []
+        for name in ("CAP_DSHOW", "CAP_MSMF", "CAP_ANY"):
+            backend = getattr(cv2, name, None)
+            if isinstance(backend, int) and backend not in backends:
+                backends.append(backend)
+        return backends or [0]
+
     def probe_cameras(self, max_index: int = 10) -> list[int]:
         available: list[int] = []
         for idx in range(max_index + 1):
-            cap = cv2.VideoCapture(idx, cv2.CAP_DSHOW)
-            if not cap.isOpened():
+            for backend in self._camera_backends():
+                cap = cv2.VideoCapture(idx, backend)
+                if not cap.isOpened():
+                    cap.release()
+                    continue
+                ok, _ = cap.read()
                 cap.release()
-                continue
-            ok, _ = cap.read()
-            cap.release()
-            if ok:
-                available.append(idx)
+                if ok:
+                    available.append(idx)
+                    break
         return available
 
     def refresh_camera_list(self) -> None:
@@ -273,17 +309,18 @@ class DepotMonitorApp(tk.Tk):
             self.camera_status_text.set("No camera found")
 
     def _open_camera(self, index: int):
-        cap = cv2.VideoCapture(index, cv2.CAP_DSHOW)
-        if not cap.isOpened():
+        for backend in self._camera_backends():
+            cap = cv2.VideoCapture(index, backend)
+            if not cap.isOpened():
+                cap.release()
+                continue
+            cap.set(cv2.CAP_PROP_FRAME_WIDTH, FRAME_WIDTH)
+            cap.set(cv2.CAP_PROP_FRAME_HEIGHT, FRAME_HEIGHT)
+            ok, _ = cap.read()
+            if ok:
+                return cap
             cap.release()
-            return None
-        cap.set(cv2.CAP_PROP_FRAME_WIDTH, FRAME_WIDTH)
-        cap.set(cv2.CAP_PROP_FRAME_HEIGHT, FRAME_HEIGHT)
-        ok, _ = cap.read()
-        if not ok:
-            cap.release()
-            return None
-        return cap
+        return None
 
     def connect_camera(self, index: int) -> bool:
         new_cap = self._open_camera(index)
@@ -296,6 +333,7 @@ class DepotMonitorApp(tk.Tk):
         self.camera_selection.set(str(index))
         self.last_detection_ts = 0.0
         self.current_detections = []
+        self.active_detection_tracks = []
         self.camera_status_text.set(f"Using camera {index}")
         if old_cap and old_cap.isOpened():
             old_cap.release()
@@ -367,8 +405,12 @@ class DepotMonitorApp(tk.Tk):
         frame = cv2.resize(frame, (FRAME_WIDTH, FRAME_HEIGHT))
         now = time.perf_counter()
         if TARGET_DPS <= 0 or (now - self.last_detection_ts) >= (1.0 / TARGET_DPS):
-            self.current_detections = self.detector.detect(frame)
+            detections = self.detector.detect(frame)
+            self._update_detection_tracks(detections)
             self.last_detection_ts = now
+        else:
+            self._decay_detection_tracks()
+        self.current_detections = [track.detection for track in self.active_detection_tracks]
 
         eval_data = self.detector.evaluate(self.current_detections, self.zones)
         self.truck_zone_state = eval_data["truck_zone_state"]
@@ -383,6 +425,42 @@ class DepotMonitorApp(tk.Tk):
         self.video_label.image = photo
 
         self.after(15, self.update_frame)
+
+    @staticmethod
+    def _centroid_distance_sq(a: tuple[int, int], b: tuple[int, int]) -> int:
+        dx = a[0] - b[0]
+        dy = a[1] - b[1]
+        return dx * dx + dy * dy
+
+    def _decay_detection_tracks(self) -> None:
+        for track in self.active_detection_tracks:
+            track.ttl_frames -= 1
+        self.active_detection_tracks = [t for t in self.active_detection_tracks if t.ttl_frames > 0]
+
+    def _update_detection_tracks(self, detections: list[Detection]) -> None:
+        self._decay_detection_tracks()
+        distance_threshold_sq = 60 * 60
+        used_track_indices: set[int] = set()
+
+        for det in detections:
+            best_idx = -1
+            best_dist_sq = distance_threshold_sq + 1
+            for idx, track in enumerate(self.active_detection_tracks):
+                if idx in used_track_indices or track.detection.label != det.label:
+                    continue
+                dist_sq = self._centroid_distance_sq(track.detection.centroid, det.centroid)
+                if dist_sq < best_dist_sq and dist_sq <= distance_threshold_sq:
+                    best_dist_sq = dist_sq
+                    best_idx = idx
+
+            if best_idx >= 0:
+                self.active_detection_tracks[best_idx].detection = det
+                self.active_detection_tracks[best_idx].ttl_frames = self.detection_ttl_frames
+                used_track_indices.add(best_idx)
+            else:
+                self.active_detection_tracks.append(
+                    DetectionTrack(detection=det, ttl_frames=self.detection_ttl_frames)
+                )
 
     def draw_overlays(self, frame, warnings: list[str]):
         output = frame.copy()
@@ -400,8 +478,6 @@ class DepotMonitorApp(tk.Tk):
                         color = (0, 0, 255)  # red
                 elif key == "warn_car":
                     color = (0, 0, 255)
-                elif key == "warn_person":
-                    color = (0, 255, 255)
                 else:
                     color = (180, 105, 255)
                 cv2.rectangle(output, (x1, y1), (x2, y2), color, 2)
@@ -414,8 +490,6 @@ class DepotMonitorApp(tk.Tk):
                     color = (0, 200, 0)
                 elif det.label == "car":
                     color = (0, 0, 255)
-                elif det.label == "person":
-                    color = (0, 255, 255)
                 else:
                     color = (180, 105, 255)
 

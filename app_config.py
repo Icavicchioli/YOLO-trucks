@@ -1,9 +1,11 @@
 """Application configuration for the depot monitor."""
 
 CAMERA_INDEX = 0
-MODEL_PATH = "yolov8n.pt"
-CONF_THRESHOLD = 0.45
+MODEL_PATH = "yolov8m.pt"
+CONF_THRESHOLD = 0.25
 IMG_SIZE = 640
+ALLOWED_LABELS = ("truck", "car")
+DETECTION_TTL_FRAMES = 10
 
 # Keep this as requested: detection cycles per second.
 TARGET_DPS = 4

@@ -4,18 +4,19 @@ Truck/depot monitoring app using YOLO + OpenCV + Tkinter.
 
 This repo includes:
 - A simple original example script: `YOLO test.py`
-- A full modular app with GUI, zone-based warnings, and RFID CSV log placeholder.
+- A full modular app with GUI, zone-based warnings, and RFID CSV placeholder flow.
 
 ## Features
 
 - Live camera detection with YOLO (`ultralytics`)
+- Class filtering (default: only `truck` + `car`)
+- Detection persistence (`DETECTION_TTL_FRAMES`) to reduce frame-to-frame flicker
 - Target processing rate control (`TARGET_DPS`)
+- Camera backend fallback (`DSHOW`/`MSMF`/`ANY`) to improve webcam compatibility on Windows
 - Truck occupancy by centroid-in-zone logic (3 truck spaces)
 - Warning rules for non-truck detections:
   - `car` -> `car detected`
-  - `person` -> `people in depot`
-  - anything else -> `warning, object in depot`
-- Separate warning zones (`warn_car`, `warn_person`, `warn_other`)
+- Separate warning zone (`warn_car`)
 - Tkinter GUI with:
   - Video feed
   - Detections + centroids
@@ -82,18 +83,27 @@ Edit `app_config.py`:
 - `MODEL_PATH`
 - `CONF_THRESHOLD`
 - `IMG_SIZE`
+- `ALLOWED_LABELS`
+- `DETECTION_TTL_FRAMES`
 - `TARGET_DPS`
 - `FRAME_WIDTH`, `FRAME_HEIGHT`
 - `ZONES_PATH`, `RFID_LOG_PATH`
 
 ## RFID Notes
 
-RFID currently uses CSV-only placeholder logic (`rfid_log.py`):
+Current RFID status (`rfid_log.py`):
 - GUI buttons create manual ingress/egress rows in `rfid_log.csv`
 - YOLO detections do **not** write RFID records
-- Replace/add hardware reading integration later in `rfid_log.py`
+- RC522 hardware is **not integrated yet** in this app
+
+## RFID Hardware Plan (Minimal)
+
+Suggested minimal path for RC522 + microcontroller:
+1. Read tag UID from RC522 on a microcontroller (e.g., Arduino Nano).
+2. Send UID + event type (`ingress`/`egress`) over Serial/USB.
+3. Add a small Python bridge that reads Serial and appends to `rfid_log.csv`.
+4. Keep GUI table as-is (`Reload list`) to visualize events.
 
 ## Legacy Example
 
 `YOLO test.py` is kept as a minimal reference script.
-
