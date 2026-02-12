@@ -20,12 +20,16 @@ from app_config import (
     IMG_SIZE,
     MODEL_PATH,
     RFID_LOG_PATH,
+    RFID_SERIAL_AUTOSTART,
+    RFID_SERIAL_BAUDRATE,
+    RFID_SERIAL_PORT,
     TARGET_DPS,
     WINDOW_TITLE,
     ZONES_PATH,
 )
 from detector import DepotDetector, Detection
 from rfid_log import add_rfid_event, read_rfid_events
+from rfid_serial_bridge import RFIDSerialBridge
 from zones import DEFAULT_ZONES, TRUCK_ZONE_KEYS, load_zones, normalize_box, save_zones
 
 
@@ -62,9 +66,11 @@ class DepotMonitorApp(tk.Tk):
         self.show_warnings = tk.BooleanVar(value=True)
 
         self.warning_text = tk.StringVar(value="No warnings")
+        self.rfid_status_text = tk.StringVar(value="RFID serial: idle")
         self.truck_zone_state: dict[str, str] = {k: "free" for k in TRUCK_ZONE_KEYS}
         self.depot_rect_items: dict[str, int] = {}
         self.depot_text_items: dict[str, int] = {}
+        self.rfid_bridge: RFIDSerialBridge | None = None
 
         self.edit_mode = False
         self.edit_zone_name = tk.StringVar(value=list(self.zones.keys())[0])
@@ -76,7 +82,9 @@ class DepotMonitorApp(tk.Tk):
         if not self.connect_camera(self.active_camera_index) and self.available_camera_indices:
             self.connect_camera(self.available_camera_indices[0])
         self.refresh_rfid_table()
+        self.start_rfid_bridge()
         self.update_depot_indicators()
+        self.after(350, self.poll_rfid_bridge)
 
         self.protocol("WM_DELETE_WINDOW", self.on_close)
         self.after(10, self.update_frame)
@@ -175,7 +183,7 @@ class DepotMonitorApp(tk.Tk):
         rfid_frame = ttk.LabelFrame(right, text="RFID ingress/egress (CSV)", padding=8)
         rfid_frame.grid(row=8, column=0, sticky="nsew", pady=(10, 0))
         rfid_frame.columnconfigure(0, weight=1)
-        rfid_frame.rowconfigure(2, weight=1)
+        rfid_frame.rowconfigure(3, weight=1)
 
         entry_row = ttk.Frame(rfid_frame)
         entry_row.grid(row=0, column=0, sticky="ew")
@@ -188,6 +196,7 @@ class DepotMonitorApp(tk.Tk):
         ttk.Button(rfid_frame, text="Reload list", command=self.refresh_rfid_table).grid(
             row=1, column=0, sticky="ew", pady=(6, 6)
         )
+        ttk.Label(rfid_frame, textvariable=self.rfid_status_text).grid(row=2, column=0, sticky="w", pady=(0, 6))
 
         self.rfid_tree = ttk.Treeview(
             rfid_frame,
@@ -203,7 +212,7 @@ class DepotMonitorApp(tk.Tk):
         ):
             self.rfid_tree.heading(col, text=col)
             self.rfid_tree.column(col, width=width, anchor="w")
-        self.rfid_tree.grid(row=2, column=0, sticky="nsew")
+        self.rfid_tree.grid(row=3, column=0, sticky="nsew")
 
     def on_mouse_down(self, event: tk.Event) -> None:
         if not self.edit_mode:
@@ -256,6 +265,35 @@ class DepotMonitorApp(tk.Tk):
             self.rfid_tree.delete(row_id)
         for row in read_rfid_events(RFID_LOG_PATH, limit=250):
             self.rfid_tree.insert("", tk.END, values=(row["timestamp"], row["event"], row["tag_id"], row["notes"]))
+
+    def start_rfid_bridge(self) -> None:
+        if not RFID_SERIAL_AUTOSTART:
+            self.rfid_status_text.set("RFID serial: disabled")
+            return
+
+        self.rfid_bridge = RFIDSerialBridge(
+            csv_path=RFID_LOG_PATH,
+            port=RFID_SERIAL_PORT,
+            baudrate=RFID_SERIAL_BAUDRATE,
+            auto_scan=(RFID_SERIAL_PORT.strip() == ""),
+        )
+        self.rfid_bridge.start()
+        self.rfid_status_text.set("RFID serial: starting")
+
+    def poll_rfid_bridge(self) -> None:
+        if not self.running:
+            return
+        table_changed = False
+        if self.rfid_bridge is not None:
+            for event in self.rfid_bridge.drain_events():
+                if event.kind == "status":
+                    self.rfid_status_text.set(f"RFID serial: {event.message}")
+                elif event.kind == "rfid_event":
+                    self.rfid_status_text.set(f"RFID serial: {event.message}")
+                    table_changed = True
+        if table_changed:
+            self.refresh_rfid_table()
+        self.after(350, self.poll_rfid_bridge)
 
     @staticmethod
     def _configure_opencv_logging() -> None:
@@ -519,6 +557,8 @@ class DepotMonitorApp(tk.Tk):
 
     def on_close(self) -> None:
         self.running = False
+        if self.rfid_bridge is not None:
+            self.rfid_bridge.stop()
         if self.cap and self.cap.isOpened():
             self.cap.release()
         self.destroy()

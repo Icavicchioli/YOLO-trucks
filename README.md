@@ -25,6 +25,7 @@ This repo includes:
   - Visibility toggles
   - Manual zone editor (draw rectangles with mouse)
   - RFID ingress/egress table from CSV
+  - Serial bridge for Arduino RFID logger (`INGRESS/EGRESS` lines -> CSV rows)
 - `.bat` launcher for Windows
 
 ## Project Structure
@@ -35,6 +36,7 @@ This repo includes:
 - `zones.py`: Zone helpers and persistence
 - `zones.json`: Editable zone coordinates
 - `rfid_log.py`: CSV read/write for ingress/egress (placeholder integration)
+- `rfid_serial_bridge.py`: Arduino serial reader that appends RFID events to CSV
 - `app_config.py`: Central config (camera/model/performance paths)
 - `run_depot_monitor.bat`: Launcher
 - `requirements.txt`: Python dependencies
@@ -88,13 +90,18 @@ Edit `app_config.py`:
 - `TARGET_DPS`
 - `FRAME_WIDTH`, `FRAME_HEIGHT`
 - `ZONES_PATH`, `RFID_LOG_PATH`
+- `RFID_SERIAL_PORT` (empty string = auto-detect)
+- `RFID_SERIAL_BAUDRATE`
+- `RFID_SERIAL_AUTOSTART`
 
 ## RFID Notes
 
-Current RFID status (`rfid_log.py`):
+Current RFID status:
 - GUI buttons create manual ingress/egress rows in `rfid_log.csv`
 - YOLO detections do **not** write RFID records
-- RC522 hardware is **not integrated yet** in this app
+- Arduino serial input is supported through `rfid_serial_bridge.py`
+  - expected line format: `INGRESS,<UID_HEX>` or `EGRESS,<UID_HEX>`
+  - notes column stores serial source (example: `serial:COM5`)
 
 ## RFID Hardware Plan (Minimal)
 

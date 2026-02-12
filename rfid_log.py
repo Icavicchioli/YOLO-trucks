@@ -20,7 +20,7 @@ def ensure_csv(path: str) -> None:
 
 
 def add_rfid_event(path: str, event: str, tag_id: str, notes: str = "") -> None:
-    """Placeholder write path until RFID hardware integration is available."""
+    """Append an ingress/egress RFID event row to CSV."""
     ensure_csv(path)
     record = {
         "timestamp": datetime.now().isoformat(timespec="seconds"),
@@ -42,4 +42,3 @@ def read_rfid_events(path: str, limit: int = 200) -> List[Dict[str, str]]:
         rows = rows[-limit:]
     rows.reverse()
     return rows
-

@@ -16,3 +16,6 @@ WINDOW_TITLE = "Depot Truck Monitor"
 
 ZONES_PATH = "zones.json"
 RFID_LOG_PATH = "rfid_log.csv"
+RFID_SERIAL_PORT = ""
+RFID_SERIAL_BAUDRATE = 115200
+RFID_SERIAL_AUTOSTART = True
