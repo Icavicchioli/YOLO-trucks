@@ -8,7 +8,7 @@ ALLOWED_LABELS = ("truck", "car")
 DETECTION_TTL_FRAMES = 10
 
 # Keep this as requested: detection cycles per second.
-TARGET_DPS = 2
+TARGET_DPS = 4
 
 FRAME_WIDTH = 960
 FRAME_HEIGHT = 540
@@ -16,3 +16,6 @@ WINDOW_TITLE = "Depot Truck Monitor"
 
 ZONES_PATH = "zones.json"
 RFID_LOG_PATH = "rfid_log.csv"
+RFID_SERIAL_PORT = ""
+RFID_SERIAL_BAUDRATE = 115200
+RFID_SERIAL_AUTOSTART = True
