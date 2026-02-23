@@ -45,6 +45,9 @@ void setup() {
   Serial.begin(115200);
   SPI.begin();
   reader.PCD_Init();
+  byte v = reader.PCD_ReadRegister(MFRC522::VersionReg);
+  Serial.print("RC522 version: 0x");
+  Serial.println(v, HEX);
   Serial.println("RFID_LOGGER_READY");
 }
 
