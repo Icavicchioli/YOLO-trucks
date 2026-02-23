@@ -1,21 +1,21 @@
 /*
-  RFID Logger MVP - Arduino Mega + 2 x MFRC522
+  RFID Logger MVP - Arduino Nano + 2 x MFRC522
 
-  Wiring (Arduino Mega):
+  Wiring (Arduino Nano):
   Shared SPI lines (both readers):
-    - SCK  -> D52
-    - MISO -> D50
-    - MOSI -> D51
+    - SCK  -> D13
+    - MISO -> D12
+    - MOSI -> D11
     - GND  -> GND
     - 3.3V -> 3.3V
 
   Reader A (INGRESS):
-    - SDA/SS -> D5
-    - RST    -> D7
+    - SDA/SS -> D10
+    - RST    -> D9  (shared with Reader B)
 
   Reader B (EGRESS):
-    - SDA/SS -> D6
-    - RST    -> D8
+    - SDA/SS -> D8
+    - RST    -> D9  (shared with Reader A)
 
   Serial output format (115200):
     INGRESS,<UID_HEX>
@@ -23,21 +23,21 @@
 
   Notes:
   - RC522 is 3.3V only.
-  - Prefer level shifting from Mega 5V outputs to RC522 3.3V inputs.
+  - Use level shifting from Nano 5V outputs to RC522 3.3V inputs.
+  - RST is shared: both readers are reset together during PCD_Init().
 */
 
 #include <SPI.h>
 #include <MFRC522.h>
 
-constexpr byte SS_INGRESS = 5;
-constexpr byte RST_INGRESS = 7;
-constexpr byte SS_EGRESS = 6;
-constexpr byte RST_EGRESS = 8;
+constexpr byte SS_INGRESS  = 10;
+constexpr byte RST_SHARED  = 9;   // shared RST for both readers
+constexpr byte SS_EGRESS   = 8;
 
 constexpr unsigned long DUPLICATE_BLOCK_MS = 1200;
 
-MFRC522 readerIngress(SS_INGRESS, RST_INGRESS);
-MFRC522 readerEgress(SS_EGRESS, RST_EGRESS);
+MFRC522 readerIngress(SS_INGRESS, RST_SHARED);
+MFRC522 readerEgress(SS_EGRESS,  RST_SHARED);
 
 String lastIngressUid = "";
 String lastEgressUid = "";
@@ -79,10 +79,6 @@ void pollReader(MFRC522 &reader, const char *eventName, String &lastUid, unsigne
 
 void setup() {
   Serial.begin(115200);
-  while (!Serial) {
-    ; // Wait for serial on boards that require it.
-  }
-
   SPI.begin();
   readerIngress.PCD_Init();
   readerEgress.PCD_Init();
