@@ -11,11 +11,11 @@
 
   Reader A (INGRESS):
     - SDA/SS -> D10
-    - RST    -> D9  (shared with Reader B)
+    - RST    -> D9
 
   Reader B (EGRESS):
     - SDA/SS -> D8
-    - RST    -> D9  (shared with Reader A)
+    - RST    -> D7
 
   Serial output format (115200):
     INGRESS,<UID_HEX>
@@ -24,20 +24,21 @@
   Notes:
   - RC522 is 3.3V only.
   - Use level shifting from Nano 5V outputs to RC522 3.3V inputs.
-  - RST is shared: both readers are reset together during PCD_Init().
+
 */
 
 #include <SPI.h>
 #include <MFRC522.h>
 
-constexpr byte SS_INGRESS  = 10;
-constexpr byte RST_SHARED  = 9;   // shared RST for both readers
-constexpr byte SS_EGRESS   = 8;
+constexpr byte SS_INGRESS   = 10;
+constexpr byte RST_INGRESS  = 9;
+constexpr byte SS_EGRESS    = 8;
+constexpr byte RST_EGRESS   = 7;
 
 constexpr unsigned long DUPLICATE_BLOCK_MS = 1200;
 
-MFRC522 readerIngress(SS_INGRESS, RST_SHARED);
-MFRC522 readerEgress(SS_EGRESS,  RST_SHARED);
+MFRC522 readerIngress(SS_INGRESS, RST_INGRESS);
+MFRC522 readerEgress(SS_EGRESS,  RST_EGRESS);
 
 String lastIngressUid = "";
 String lastEgressUid = "";
