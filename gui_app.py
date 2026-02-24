@@ -165,12 +165,12 @@ class DepotMonitorApp(tk.Tk):
         self.rowconfigure(1, weight=1)
 
         # ── Izquierda: video + checkboxes + depot cards ───────────────────
-        left = ttk.Frame(self, padding=10, style="App.TFrame")
+        left = ttk.Frame(self, padding=(10, 10, 10, 40), style="App.TFrame")
         left.grid(row=1, column=0, sticky="nsew")
         left.rowconfigure(0, weight=1)
         left.columnconfigure(0, weight=1)
 
-        self.video_label = ttk.Label(left)
+        self.video_label = ttk.Label(left, anchor="center")
         self.video_label.grid(row=0, column=0, sticky="nsew")
         self.video_label.bind("<ButtonPress-1>", self.on_mouse_down)
         self.video_label.bind("<B1-Motion>", self.on_mouse_drag)

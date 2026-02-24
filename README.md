@@ -49,6 +49,14 @@ python main.py
 
 ---
 
+## Capturas
+
+| Pantalla principal (detecciones) | Tab Configuración |
+|---|---|
+| ![Pantalla detección](imgs/pantalla%20deteccion.png) | ![Pantalla config](imgs/pantalla%20config.png) |
+
+---
+
 ## Interfaz
 
 La GUI tiene dos tabs en el panel derecho:

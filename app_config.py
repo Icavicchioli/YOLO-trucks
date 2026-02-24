@@ -21,8 +21,8 @@ DETECTION_TTL_FRAMES = 10
 # Keep this as requested: detection cycles per second.
 TARGET_DPS = 2
 
-FRAME_WIDTH = 640
-FRAME_HEIGHT = 360
+FRAME_WIDTH = 760
+FRAME_HEIGHT = int(FRAME_WIDTH * 9 / 16)
 WINDOW_TITLE = "Depot Truck Monitor"
 
 ZONES_PATH = "zones.json"
