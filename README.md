@@ -1,116 +1,176 @@
-# YOLO-trucks
+# YOLO-trucks — Truck Depot Occupancy Control
 
-Truck/depot monitoring app using YOLO + OpenCV + Tkinter.
+Demo de monitoreo de depósito en tiempo real desarrollado para **UIA × Accenture**.
+Detecta camiones y autos con YOLO, monitorea ocupación de espacios por zonas, y registra eventos RFID de ingreso/egreso.
 
-This repo includes:
-- A simple original example script: `YOLO test.py`
-- A full modular app with GUI, zone-based warnings, and RFID CSV placeholder flow.
+---
 
-## Features
+## Estructura del proyecto
 
-- Live camera detection with YOLO (`ultralytics`)
-- Class filtering (default: only `truck` + `car`)
-- Detection persistence (`DETECTION_TTL_FRAMES`) to reduce frame-to-frame flicker
-- Target processing rate control (`TARGET_DPS`)
-- Camera backend fallback (`DSHOW`/`MSMF`/`ANY`) to improve webcam compatibility on Windows
-- Truck occupancy by centroid-in-zone logic (3 truck spaces)
-- Warning rules for non-truck detections:
-  - `car` -> `car detected`
-- Separate warning zone (`warn_car`)
-- Tkinter GUI with:
-  - Video feed
-  - Detections + centroids
-  - Zone overlays
-  - Warning text
-  - Visibility toggles
-  - Manual zone editor (draw rectangles with mouse)
-  - RFID ingress/egress table from CSV
-  - Serial bridge for Arduino RFID logger (`INGRESS/EGRESS` lines -> CSV rows)
-- `.bat` launcher for Windows
+| Archivo | Descripción |
+|---|---|
+| `main.py` | Entrypoint de la app |
+| `gui_app.py` | UI Tkinter y loop principal |
+| `detector.py` | Inferencia YOLO y evaluación de zonas |
+| `zones.py` | Helpers de zonas y persistencia |
+| `zones.json` | Coordenadas de zonas (editables desde la GUI) |
+| `rfid_log.py` | Lectura/escritura CSV de eventos RFID |
+| `rfid_serial_bridge.py` | Bridge serial Arduino → CSV |
+| `app_config.py` | Configuración central |
+| `run_depot_monitor.bat` | Launcher Windows |
+| `requirements.txt` | Dependencias Python |
+| `RFID_logger/RFID_logger.ino` | Firmware Arduino Nano para lectores RFID |
 
-## Project Structure
+---
 
-- `main.py`: App entrypoint
-- `gui_app.py`: Tkinter UI and main runtime loop
-- `detector.py`: YOLO inference and event evaluation
-- `zones.py`: Zone helpers and persistence
-- `zones.json`: Editable zone coordinates
-- `rfid_log.py`: CSV read/write for ingress/egress (placeholder integration)
-- `rfid_serial_bridge.py`: Arduino serial reader that appends RFID events to CSV
-- `app_config.py`: Central config (camera/model/performance paths)
-- `run_depot_monitor.bat`: Launcher
-- `requirements.txt`: Python dependencies
-
-## Requirements
+## Requisitos
 
 - Python 3.9+
 - Webcam
-- Windows (for `.bat` launcher)
-
-Install deps:
+- Windows (el `.bat` launcher es para Windows; en Linux/Mac usar `python main.py`)
 
 ```bash
 pip install -r requirements.txt
 ```
 
-## Run
+---
 
-Option 1 (Windows):
+## Cómo correr
 
+**Windows:**
 ```bat
 run_depot_monitor.bat
 ```
 
-Option 2:
-
+**Cualquier plataforma:**
 ```bash
 python main.py
 ```
 
-## Zone Setup (Manual)
+---
 
-1. Start app.
-2. In **Zone editor**, select zone name from dropdown.
-3. Click **Start editing selected zone**.
-4. Drag on video to define rectangle.
-5. Repeat for all zones.
-6. Click **Save zones**.
+## Interfaz
 
-Zones are stored in `zones.json`.
+La GUI tiene dos tabs en el panel derecho:
 
-## Config
+### Tab "Operación"
+- Panel de **alertas** activas
+- Tabla de **eventos RFID** (ingreso/egreso) con entrada manual y refresh
+- Estado de depósitos (disponible / no disponible / alerta) — mostrado debajo del video
 
-Edit `app_config.py`:
-- `CAMERA_INDEX`
-- `MODEL_PATH`
-- `CONF_THRESHOLD`
-- `IMG_SIZE`
-- `ALLOWED_LABELS`
-- `DETECTION_TTL_FRAMES`
-- `TARGET_DPS`
-- `FRAME_WIDTH`, `FRAME_HEIGHT`
-- `ZONES_PATH`, `RFID_LOG_PATH`
-- `RFID_SERIAL_PORT` (empty string = auto-detect)
-- `RFID_SERIAL_BAUDRATE`
-- `RFID_SERIAL_AUTOSTART`
+### Tab "Configuración"
+- **Selector de modelo YOLO** — elegir entre Nano/Small/Medium/Large/XLarge y aplicar en caliente
+- **Selector de cámara** — detecta cámaras disponibles, permite cambiar sin reiniciar
+- **Editor de zonas** — dibuja zonas con el mouse directamente sobre el video
 
-## RFID Notes
+### Panel izquierdo
+- Feed de video en tiempo real con overlays (detecciones, centroides, zonas, alertas)
+- Checkboxes para activar/desactivar cada overlay
+- Cards de estado de los 3 depósitos
 
-Current RFID status:
-- GUI buttons create manual ingress/egress rows in `rfid_log.csv`
-- YOLO detections do **not** write RFID records
-- Arduino serial input is supported through `rfid_serial_bridge.py`
-  - expected line format: `INGRESS,<UID_HEX>` or `EGRESS,<UID_HEX>`
-  - notes column stores serial source (example: `serial:COM5`)
+---
 
-## RFID Hardware Plan (Minimal)
+## Configuración (`app_config.py`)
 
-Suggested minimal path for RC522 + microcontroller:
-1. Read tag UID from RC522 on a microcontroller (e.g., Arduino Nano).
-2. Send UID + event type (`ingress`/`egress`) over Serial/USB.
-3. Add a small Python bridge that reads Serial and appends to `rfid_log.csv`.
-4. Keep GUI table as-is (`Reload list`) to visualize events.
+| Variable | Descripción |
+|---|---|
+| `CAMERA_INDEX` | Índice de cámara por defecto |
+| `AVAILABLE_MODELS` | Lista de modelos YOLO disponibles |
+| `MODEL_PATH` | Modelo activo por defecto — cambiar el índice `[0]` por `[1]`..`[4]` para otro modelo |
+| `CONF_THRESHOLD` | Umbral de confianza para detecciones (0.0–1.0) |
+| `IMG_SIZE` | Tamaño de imagen para inferencia YOLO |
+| `ALLOWED_LABELS` | Clases a detectar (default: `truck`, `car`) |
+| `DETECTION_TTL_FRAMES` | Frames de persistencia de detección (reduce parpadeo) |
+| `TARGET_DPS` | Ciclos de detección por segundo |
+| `FRAME_WIDTH`, `FRAME_HEIGHT` | Resolución del video mostrado (también afecta velocidad) |
+| `RFID_SERIAL_PORT` | Puerto COM del Arduino (vacío = autodetección) |
+| `RFID_SERIAL_BAUDRATE` | Baudrate del Arduino (default: 115200) |
+| `RFID_SERIAL_AUTOSTART` | Iniciar bridge serial automáticamente |
 
-## Legacy Example
+### Modelos disponibles
 
-`YOLO test.py` is kept as a minimal reference script.
+```python
+AVAILABLE_MODELS = (
+    ("yolov8n.pt", "Nano    — más rápido, recomendado sin GPU"),
+    ("yolov8s.pt", "Small"),
+    ("yolov8m.pt", "Medium"),
+    ("yolov8l.pt", "Large"),
+    ("yolov8x.pt", "XLarge  — más preciso, requiere GPU"),
+)
+MODEL_PATH = AVAILABLE_MODELS[0][0]  # cambiar el primer índice
+```
+
+Sin GPU (CPU only) se recomienda `yolov8n.pt`. Los modelos se descargan automáticamente la primera vez.
+
+---
+
+## Editor de zonas
+
+1. Abrir tab **Configuración**
+2. Seleccionar zona en el dropdown
+3. Hacer clic en **Editar zona seleccionada**
+4. Arrastrar sobre el video para dibujar el rectángulo
+5. Repetir para cada zona
+6. Hacer clic en **Guardar zonas**
+
+Zonas disponibles: `truck_space_1`, `truck_space_2`, `truck_space_3`, `warn_car`.
+Se guardan en `zones.json`.
+
+---
+
+## RFID — Hardware
+
+### Componentes
+- Arduino Nano
+- 2× módulo RC522 (MFRC522 o compatible)
+- CD4504B (level shifter 5V → 3.3V) — 6 canales necesarios
+
+### Pinout Arduino Nano
+
+| Señal | Pin Nano | Notas |
+|---|---|---|
+| SCK | D13 | SPI hardware — level shift |
+| MISO | D12 | SPI hardware — directo (no level shift) |
+| MOSI | D11 | SPI hardware — level shift |
+| SS lector INGRESS | D10 | level shift |
+| RST lector INGRESS | D9 | level shift |
+| SS lector EGRESS | D8 | level shift |
+| RST lector EGRESS | D7 | level shift |
+
+**Level shifter CD4504B:** `VCC = 5V` (lado Nano), `VDD = 3.3V` (lado RC522). MISO va directo sin level shifter.
+
+> Para el adaptador de niveles se puede usar el CD4504B o un divisor resistivo (1kΩ serie + 2kΩ a GND por canal). Resistencias de 10kΩ generan problemas de timing en SCK — usar 1kΩ/2kΩ o directamente el integrado.
+
+### Firmware (`RFID_logger/RFID_logger.ino`)
+
+Lee UIDs de hasta 2 lectores RC522 y los envía por serial a 115200 baud en el formato:
+
+```
+INGRESS,<UID_HEX>
+EGRESS,<UID_HEX>
+```
+
+El bridge Python (`rfid_serial_bridge.py`) escucha el puerto serial y agrega las filas al CSV `rfid_log.csv` automáticamente.
+
+### Configuración del puerto serial
+
+En `app_config.py`:
+```python
+RFID_SERIAL_PORT = ""        # vacío = autodetección del COM
+RFID_SERIAL_BAUDRATE = 115200
+RFID_SERIAL_AUTOSTART = True
+```
+
+---
+
+## Notas de performance
+
+- Sin GPU, usar `yolov8n.pt` y `TARGET_DPS = 2`
+- Reducir `FRAME_WIDTH`/`FRAME_HEIGHT` también ayuda (default: 640×360)
+- El selector de modelo en la tab Configuración permite comparar modelos en caliente durante el demo
+
+---
+
+## Ejemplo de referencia
+
+`YOLO test.py` es un script mínimo original, mantenido como referencia.

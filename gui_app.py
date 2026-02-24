@@ -12,6 +12,7 @@ from PIL import Image, ImageTk
 
 from app_config import (
     ALLOWED_LABELS,
+    AVAILABLE_MODELS,
     CAMERA_INDEX,
     CONF_THRESHOLD,
     DETECTION_TTL_FRAMES,
@@ -52,6 +53,8 @@ class DepotMonitorApp(tk.Tk):
         self.detection_ttl_frames = max(1, DETECTION_TTL_FRAMES)
         self.active_detection_tracks: list[DetectionTrack] = []
         self.zones = load_zones(ZONES_PATH, FRAME_WIDTH, FRAME_HEIGHT)
+
+        self.model_selection = tk.StringVar(value=MODEL_PATH)
 
         self.cap = None
         self.active_camera_index = CAMERA_INDEX
@@ -97,7 +100,7 @@ class DepotMonitorApp(tk.Tk):
             style.theme_use("clam")
         except tk.TclError:
             pass
-        style.configure("App.TFrame", background="#edf1f5")
+        style.configure("App.TFrame", background="#f0f2f5")
         style.configure(
             "App.TLabelframe",
             background="#ffffff",
@@ -108,19 +111,62 @@ class DepotMonitorApp(tk.Tk):
         style.configure(
             "App.TLabelframe.Label",
             background="#ffffff",
-            foreground="#203045",
+            foreground="#1a1a2e",
             font=("Segoe UI", 10, "bold"),
         )
-        style.configure("App.TLabel", background="#edf1f5", foreground="#2a3645", font=("Segoe UI", 10))
-        style.configure("Muted.TLabel", background="#edf1f5", foreground="#5f6d7b", font=("Segoe UI", 9))
+        style.configure("App.TLabel", background="#f0f2f5", foreground="#1a1a2e", font=("Segoe UI", 10))
+        style.configure("Muted.TLabel", background="#f0f2f5", foreground="#6b7280", font=("Segoe UI", 9))
+        style.configure("App.TNotebook", background="#f0f2f5", borderwidth=0)
+        style.configure("App.TNotebook.Tab", font=("Segoe UI", 10), padding=(12, 6))
+        self.configure(bg="#f0f2f5")
+
+    def _build_banner(self) -> None:
+        banner = tk.Frame(self, bg="#0f1923", pady=10)
+        banner.grid(row=0, column=0, columnspan=2, sticky="ew")
+        banner.columnconfigure(1, weight=1)
+
+        # Branding izquierda
+        left_brand = tk.Frame(banner, bg="#0f1923")
+        left_brand.grid(row=0, column=0, sticky="w", padx=(20, 0))
+        tk.Label(
+            left_brand, text="UIA", bg="#0f1923", fg="#A100FF",
+            font=("Segoe UI", 13, "bold"),
+        ).grid(row=0, column=0)
+        tk.Label(
+            left_brand, text=" × ", bg="#0f1923", fg="#7a8a9a",
+            font=("Segoe UI", 13),
+        ).grid(row=0, column=1)
+        tk.Label(
+            left_brand, text="Accenture", bg="#0f1923", fg="#A100FF",
+            font=("Segoe UI", 13, "bold"),
+        ).grid(row=0, column=2)
+
+        # Título centro
+        tk.Label(
+            banner,
+            text="Truck Depot Occupancy Control",
+            bg="#0f1923",
+            fg="#ffffff",
+            font=("Segoe UI", 15, "bold"),
+        ).grid(row=0, column=1)
+
+        # Badge DEMO derecha
+        badge_frame = tk.Frame(banner, bg="#A100FF", padx=10, pady=4)
+        badge_frame.grid(row=0, column=2, sticky="e", padx=(0, 20))
+        tk.Label(
+            badge_frame, text="DEMO", bg="#A100FF", fg="white",
+            font=("Segoe UI", 9, "bold"),
+        ).pack()
 
     def _build_layout(self) -> None:
+        self._build_banner()
         self.columnconfigure(0, weight=3)
         self.columnconfigure(1, weight=2)
-        self.rowconfigure(0, weight=1)
+        self.rowconfigure(1, weight=1)
 
+        # ── Izquierda: video + checkboxes + depot cards ───────────────────
         left = ttk.Frame(self, padding=10, style="App.TFrame")
-        left.grid(row=0, column=0, sticky="nsew")
+        left.grid(row=1, column=0, sticky="nsew")
         left.rowconfigure(0, weight=1)
         left.columnconfigure(0, weight=1)
 
@@ -130,49 +176,133 @@ class DepotMonitorApp(tk.Tk):
         self.video_label.bind("<B1-Motion>", self.on_mouse_drag)
         self.video_label.bind("<ButtonRelease-1>", self.on_mouse_up)
 
-        controls = ttk.Frame(left, padding=(0, 10, 0, 0), style="App.TFrame")
+        controls = ttk.Frame(left, padding=(0, 6, 0, 0), style="App.TFrame")
         controls.grid(row=1, column=0, sticky="ew")
+        ttk.Checkbutton(controls, text="Detecciones", variable=self.show_detections).grid(row=0, column=0, sticky="w")
+        ttk.Checkbutton(controls, text="Centroides", variable=self.show_centroids).grid(row=0, column=1, sticky="w")
+        ttk.Checkbutton(controls, text="Zonas", variable=self.show_zones).grid(row=0, column=2, sticky="w")
+        ttk.Checkbutton(controls, text="Alertas", variable=self.show_warnings).grid(row=0, column=3, sticky="w")
 
-        ttk.Checkbutton(controls, text="Show detections", variable=self.show_detections).grid(
-            row=0, column=0, sticky="w"
-        )
-        ttk.Checkbutton(controls, text="Show centroids", variable=self.show_centroids).grid(
-            row=0, column=1, sticky="w"
-        )
-        ttk.Checkbutton(controls, text="Show zones", variable=self.show_zones).grid(
-            row=0, column=2, sticky="w"
-        )
-        ttk.Checkbutton(controls, text="Show warnings", variable=self.show_warnings).grid(
-            row=0, column=3, sticky="w"
-        )
-
-        right = ttk.Frame(self, padding=10, style="App.TFrame")
-        right.grid(row=0, column=1, sticky="nsew")
-        right.columnconfigure(0, weight=1)
-        right.rowconfigure(10, weight=1)
-
-        header = ttk.Frame(right, style="App.TFrame")
-        header.grid(row=0, column=0, sticky="ew")
-        header.columnconfigure(0, weight=1)
-        ttk.Label(header, text="Panel de Operación", style="App.TLabel", font=("Segoe UI", 13, "bold")).grid(
-            row=0, column=0, sticky="w"
-        )
-        ttk.Label(
-            header,
-            text="Monitoreo en tiempo real de depósitos y alertas",
-            style="Muted.TLabel",
-        ).grid(row=1, column=0, sticky="w", pady=(2, 0))
-
-        depot_frame = ttk.LabelFrame(right, text="Estado de depósitos", style="App.TLabelframe")
-        depot_frame.grid(row=1, column=0, sticky="ew", pady=(10, 0))
+        depot_frame = ttk.LabelFrame(left, text="Estado de depósitos", style="App.TLabelframe")
+        depot_frame.grid(row=2, column=0, sticky="ew", pady=(8, 0))
         depot_frame.columnconfigure(0, weight=1)
         self.depot_cards_container = ttk.Frame(depot_frame)
-        self.depot_cards_container.grid(row=0, column=0, sticky="ew")
-        self.depot_cards_container.columnconfigure(0, weight=1)
+        self.depot_cards_container.grid(row=0, column=0)   # sin sticky → centrado
+        self.depot_cards_container.columnconfigure((0, 1, 2), weight=1)
         self._build_depot_indicators()
 
-        camera_frame = ttk.LabelFrame(right, text="Camera", style="App.TLabelframe")
-        camera_frame.grid(row=2, column=0, sticky="ew", pady=(10, 0))
+        # ── Derecha: notebook (Operación / Configuración) ─────────────────
+        right = ttk.Frame(self, padding=(0, 10, 10, 10), style="App.TFrame")
+        right.grid(row=1, column=1, sticky="nsew")
+        right.columnconfigure(0, weight=1)
+        right.rowconfigure(0, weight=1)
+
+        notebook = ttk.Notebook(right, style="App.TNotebook")
+        notebook.grid(row=0, column=0, sticky="nsew")
+
+        # ── Tab 1: Operación ──────────────────────────────────────────────
+        tab_op = ttk.Frame(notebook, padding=8, style="App.TFrame")
+        tab_op.columnconfigure(0, weight=1)
+        tab_op.rowconfigure(1, weight=1)
+        notebook.add(tab_op, text="Operación")
+
+        warning_frame = tk.Frame(
+            tab_op,
+            bg="#ffffff",
+            bd=1,
+            relief="solid",
+            padx=10,
+            pady=8,
+            highlightthickness=1,
+            highlightbackground="#d7dee6",
+            highlightcolor="#d7dee6",
+        )
+        warning_frame.grid(row=0, column=0, sticky="ew", pady=(0, 8))
+        warning_frame.grid_columnconfigure(0, weight=1)
+        self.warning_title_label = tk.Label(
+            warning_frame,
+            text="Alertas",
+            bg="#ffffff",
+            fg="#203045",
+            font=("Segoe UI", 10, "bold"),
+            anchor="w",
+        )
+        self.warning_title_label.grid(row=0, column=0, sticky="w")
+        self.warning_value_label = tk.Label(
+            warning_frame,
+            textvariable=self.warning_text,
+            bg="#ffffff",
+            fg="#5f6d7b",
+            font=("Segoe UI", 10),
+            anchor="w",
+            justify="left",
+            wraplength=320,
+        )
+        self.warning_value_label.grid(row=1, column=0, sticky="w", pady=(2, 0))
+
+        rfid_frame = ttk.LabelFrame(tab_op, text="RFID ingress/egress", style="App.TLabelframe")
+        rfid_frame.grid(row=1, column=0, sticky="nsew")
+        rfid_frame.columnconfigure(0, weight=1)
+        rfid_frame.rowconfigure(2, weight=1)
+
+        entry_row = ttk.Frame(rfid_frame)
+        entry_row.grid(row=0, column=0, sticky="ew")
+        entry_row.columnconfigure(0, weight=1)
+        self.tag_entry = ttk.Entry(entry_row)
+        self.tag_entry.grid(row=0, column=0, sticky="ew")
+        ttk.Button(entry_row, text="Ingress", command=self.log_ingress).grid(row=0, column=1, padx=(4, 0))
+        ttk.Button(entry_row, text="Egress", command=self.log_egress).grid(row=0, column=2, padx=(4, 0))
+        ttk.Button(entry_row, text="↺", command=self.refresh_rfid_table, width=2).grid(row=0, column=3, padx=(4, 0))
+
+        ttk.Label(rfid_frame, textvariable=self.rfid_status_text, style="Muted.TLabel").grid(
+            row=1, column=0, sticky="w", pady=(4, 4)
+        )
+
+        self.rfid_tree = ttk.Treeview(
+            rfid_frame,
+            columns=("timestamp", "event", "tag_id"),
+            show="headings",
+            height=8,
+        )
+        for col, width in (("timestamp", 130), ("event", 70), ("tag_id", 100)):
+            self.rfid_tree.heading(col, text=col)
+            self.rfid_tree.column(col, width=width, anchor="w")
+        self.rfid_tree.grid(row=2, column=0, sticky="nsew")
+
+        # ── Tab 2: Configuración ──────────────────────────────────────────
+        tab_cfg = ttk.Frame(notebook, padding=8, style="App.TFrame")
+        tab_cfg.columnconfigure(0, weight=1)
+        notebook.add(tab_cfg, text="Configuración")
+
+        model_frame = ttk.LabelFrame(tab_cfg, text="Modelo YOLO", style="App.TLabelframe")
+        model_frame.grid(row=0, column=0, sticky="ew")
+        model_frame.columnconfigure(0, weight=1)
+
+        model_labels = [desc for _, desc in AVAILABLE_MODELS]
+        model_paths = [path for path, _ in AVAILABLE_MODELS]
+        current_desc = next(
+            (desc for path, desc in AVAILABLE_MODELS if path == MODEL_PATH),
+            model_labels[0],
+        )
+        self._model_paths = model_paths
+        self._model_combo_var = tk.StringVar(value=current_desc)
+        model_combo = ttk.Combobox(
+            model_frame,
+            state="readonly",
+            textvariable=self._model_combo_var,
+            values=model_labels,
+        )
+        model_combo.grid(row=0, column=0, sticky="ew")
+        ttk.Button(model_frame, text="Apply", command=self.apply_model_selection).grid(
+            row=0, column=1, padx=(6, 0)
+        )
+        self.model_status_text = tk.StringVar(value=f"Modelo activo: {MODEL_PATH}")
+        ttk.Label(model_frame, textvariable=self.model_status_text, style="Muted.TLabel").grid(
+            row=1, column=0, columnspan=2, sticky="w", pady=(6, 0)
+        )
+
+        camera_frame = ttk.LabelFrame(tab_cfg, text="Cámara", style="App.TLabelframe")
+        camera_frame.grid(row=1, column=0, sticky="ew", pady=(10, 0))
         camera_frame.columnconfigure(0, weight=1)
 
         self.camera_combo = ttk.Combobox(
@@ -192,45 +322,11 @@ class DepotMonitorApp(tk.Tk):
             row=1, column=0, columnspan=3, sticky="w", pady=(6, 0)
         )
 
-        warning_frame = tk.Frame(
-            right,
-            bg="#ffffff",
-            bd=1,
-            relief="solid",
-            padx=10,
-            pady=8,
-            highlightthickness=1,
-            highlightbackground="#d7dee6",
-            highlightcolor="#d7dee6",
-        )
-        warning_frame.grid(row=3, column=0, sticky="ew", pady=(10, 0))
-        warning_frame.grid_columnconfigure(0, weight=1)
-        self.warning_title_label = tk.Label(
-            warning_frame,
-            text="Alertas",
-            bg="#ffffff",
-            fg="#203045",
-            font=("Segoe UI", 10, "bold"),
-            anchor="w",
-        )
-        self.warning_title_label.grid(row=0, column=0, sticky="w")
-        self.warning_value_label = tk.Label(
-            warning_frame,
-            textvariable=self.warning_text,
-            bg="#ffffff",
-            fg="#5f6d7b",
-            font=("Segoe UI", 10),
-            anchor="w",
-            justify="left",
-            wraplength=380,
-        )
-        self.warning_value_label.grid(row=1, column=0, sticky="w", pady=(4, 0))
-
-        zone_frame = ttk.LabelFrame(right, text="Zone editor", style="App.TLabelframe")
-        zone_frame.grid(row=4, column=0, sticky="ew", pady=(10, 0))
+        zone_frame = ttk.LabelFrame(tab_cfg, text="Editor de zonas", style="App.TLabelframe")
+        zone_frame.grid(row=2, column=0, sticky="ew", pady=(10, 0))
         zone_frame.columnconfigure(0, weight=1)
 
-        ttk.Label(zone_frame, text="Zone").grid(row=0, column=0, sticky="w")
+        ttk.Label(zone_frame, text="Zona").grid(row=0, column=0, sticky="w")
         zone_picker = ttk.Combobox(
             zone_frame,
             state="readonly",
@@ -239,49 +335,15 @@ class DepotMonitorApp(tk.Tk):
         )
         zone_picker.grid(row=1, column=0, sticky="ew", pady=(2, 6))
 
-        self.edit_btn = ttk.Button(zone_frame, text="Start editing selected zone", command=self.toggle_edit_mode)
+        self.edit_btn = ttk.Button(zone_frame, text="Editar zona seleccionada", command=self.toggle_edit_mode)
         self.edit_btn.grid(row=2, column=0, sticky="ew")
 
-        ttk.Button(zone_frame, text="Save zones", command=self.save_zones_to_disk).grid(
+        ttk.Button(zone_frame, text="Guardar zonas", command=self.save_zones_to_disk).grid(
             row=3, column=0, sticky="ew", pady=(6, 0)
         )
-        ttk.Button(zone_frame, text="Reset zones", command=self.reset_zones).grid(
+        ttk.Button(zone_frame, text="Resetear zonas", command=self.reset_zones).grid(
             row=4, column=0, sticky="ew", pady=(6, 0)
         )
-
-        rfid_frame = ttk.LabelFrame(right, text="RFID ingress/egress (CSV)", style="App.TLabelframe")
-        rfid_frame.grid(row=10, column=0, sticky="nsew", pady=(10, 0))
-        rfid_frame.columnconfigure(0, weight=1)
-        rfid_frame.rowconfigure(3, weight=1)
-
-        entry_row = ttk.Frame(rfid_frame)
-        entry_row.grid(row=0, column=0, sticky="ew")
-        entry_row.columnconfigure(0, weight=1)
-        self.tag_entry = ttk.Entry(entry_row)
-        self.tag_entry.grid(row=0, column=0, sticky="ew")
-        ttk.Button(entry_row, text="Ingress", command=self.log_ingress).grid(row=0, column=1, padx=(6, 0))
-        ttk.Button(entry_row, text="Egress", command=self.log_egress).grid(row=0, column=2, padx=(6, 0))
-
-        ttk.Button(rfid_frame, text="Reload list", command=self.refresh_rfid_table).grid(
-            row=1, column=0, sticky="ew", pady=(6, 6)
-        )
-        ttk.Label(rfid_frame, textvariable=self.rfid_status_text).grid(row=2, column=0, sticky="w", pady=(0, 6))
-
-        self.rfid_tree = ttk.Treeview(
-            rfid_frame,
-            columns=("timestamp", "event", "tag_id", "notes"),
-            show="headings",
-            height=12,
-        )
-        for col, width in (
-            ("timestamp", 160),
-            ("event", 90),
-            ("tag_id", 120),
-            ("notes", 180),
-        ):
-            self.rfid_tree.heading(col, text=col)
-            self.rfid_tree.column(col, width=width, anchor="w")
-        self.rfid_tree.grid(row=3, column=0, sticky="nsew")
 
     def on_mouse_down(self, event: tk.Event) -> None:
         if not self.edit_mode:
@@ -306,7 +368,7 @@ class DepotMonitorApp(tk.Tk):
     def toggle_edit_mode(self) -> None:
         self.edit_mode = not self.edit_mode
         self.edit_btn.configure(
-            text="Stop editing selected zone" if self.edit_mode else "Start editing selected zone"
+            text="Detener edición" if self.edit_mode else "Editar zona seleccionada"
         )
 
     def save_zones_to_disk(self) -> None:
@@ -333,7 +395,7 @@ class DepotMonitorApp(tk.Tk):
         for row_id in self.rfid_tree.get_children():
             self.rfid_tree.delete(row_id)
         for row in read_rfid_events(RFID_LOG_PATH, limit=250):
-            self.rfid_tree.insert("", tk.END, values=(row["timestamp"], row["event"], row["tag_id"], row["notes"]))
+            self.rfid_tree.insert("", tk.END, values=(row["timestamp"], row["event"], row["tag_id"]))
 
     def start_rfid_bridge(self) -> None:
         if not RFID_SERIAL_AUTOSTART:
@@ -446,6 +508,19 @@ class DepotMonitorApp(tk.Tk):
             old_cap.release()
         return True
 
+    def apply_model_selection(self) -> None:
+        selected_desc = self._model_combo_var.get()
+        model_labels = [desc for _, desc in AVAILABLE_MODELS]
+        try:
+            idx = model_labels.index(selected_desc)
+        except ValueError:
+            return
+        model_path = self._model_paths[idx]
+        self.model_status_text.set(f"Cargando {model_path}…")
+        self.update_idletasks()
+        self.detector = DepotDetector(model_path, CONF_THRESHOLD, IMG_SIZE, ALLOWED_LABELS)
+        self.model_status_text.set(f"Modelo activo: {model_path}")
+
     def apply_camera_selection(self) -> None:
         value = self.camera_selection.get().strip()
         if not value:
@@ -461,7 +536,7 @@ class DepotMonitorApp(tk.Tk):
 
     def _build_depot_indicators(self) -> None:
         for idx, key in enumerate(TRUCK_ZONE_KEYS):
-            self.depot_cards_container.rowconfigure(idx, weight=1)
+            self.depot_cards_container.columnconfigure(idx, weight=1)
             card = tk.Frame(
                 self.depot_cards_container,
                 bg="#c94847",
@@ -473,7 +548,7 @@ class DepotMonitorApp(tk.Tk):
                 highlightbackground="#b73e3e",
                 highlightcolor="#b73e3e",
             )
-            card.grid(row=idx, column=0, sticky="ew", pady=(0, 8 if idx < len(TRUCK_ZONE_KEYS) - 1 else 0))
+            card.grid(row=0, column=idx, sticky="ew", padx=(0, 6 if idx < len(TRUCK_ZONE_KEYS) - 1 else 0))
             card.columnconfigure(0, weight=1)
 
             title = tk.Label(

@@ -26,7 +26,7 @@
     EGRESS,<UID_HEX>
 
   Notes:
-  - RC522 is 3.3V only (FM17522 clone tolerates 5V but use level shifter in production).
+  - RC522 is 3.3V only (RC522 clone tolerates 5V but use level shifter in production).
 
   https://www.ti.com/product/CD4504B
 
