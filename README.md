@@ -1,7 +1,7 @@
 # YOLO-trucks — Truck Depot Occupancy Control
 
 Demo de monitoreo de depósito en tiempo real desarrollado para **UIA × Accenture**.
-Detecta camiones y autos con YOLO, monitorea ocupación de espacios por zonas, y registra eventos RFID de ingreso/egreso.
+Detecta camiones y autos con YOLO (You Only Look Once), monitorea ocupación de espacios por zonas, y registra eventos RFID de ingreso/egreso.
 
 ---
 
