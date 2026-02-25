@@ -49,6 +49,7 @@ class DepotMonitorApp(tk.Tk):
         self._configure_opencv_logging()
         self._configure_styles()
 
+        self._conf_var = tk.DoubleVar(value=CONF_THRESHOLD)
         self.detector = DepotDetector(MODEL_PATH, CONF_THRESHOLD, IMG_SIZE, ALLOWED_LABELS)
         self.detection_ttl_frames = max(1, DETECTION_TTL_FRAMES)
         self.active_detection_tracks: list[DetectionTrack] = []
@@ -301,8 +302,23 @@ class DepotMonitorApp(tk.Tk):
             row=1, column=0, columnspan=2, sticky="w", pady=(6, 0)
         )
 
+        det_frame = ttk.LabelFrame(tab_cfg, text="Detección", style="App.TLabelframe")
+        det_frame.grid(row=1, column=0, sticky="ew", pady=(10, 0))
+        det_frame.columnconfigure(1, weight=1)
+
+        self._conf_label = tk.StringVar(value=f"{CONF_THRESHOLD:.2f}")
+        ttk.Label(det_frame, text="Umbral confianza").grid(row=0, column=0, sticky="w", padx=(0, 8))
+        ttk.Scale(
+            det_frame,
+            from_=0.05, to=0.95,
+            orient="horizontal",
+            variable=self._conf_var,
+            command=self._on_conf_change,
+        ).grid(row=0, column=1, sticky="ew")
+        ttk.Label(det_frame, textvariable=self._conf_label, width=4).grid(row=0, column=2, padx=(6, 0))
+
         camera_frame = ttk.LabelFrame(tab_cfg, text="Cámara", style="App.TLabelframe")
-        camera_frame.grid(row=1, column=0, sticky="ew", pady=(10, 0))
+        camera_frame.grid(row=2, column=0, sticky="ew", pady=(10, 0))
         camera_frame.columnconfigure(0, weight=1)
 
         self.camera_combo = ttk.Combobox(
@@ -323,7 +339,7 @@ class DepotMonitorApp(tk.Tk):
         )
 
         zone_frame = ttk.LabelFrame(tab_cfg, text="Editor de zonas", style="App.TLabelframe")
-        zone_frame.grid(row=2, column=0, sticky="ew", pady=(10, 0))
+        zone_frame.grid(row=3, column=0, sticky="ew", pady=(10, 0))
         zone_frame.columnconfigure(0, weight=1)
 
         ttk.Label(zone_frame, text="Zona").grid(row=0, column=0, sticky="w")
@@ -508,6 +524,11 @@ class DepotMonitorApp(tk.Tk):
             old_cap.release()
         return True
 
+    def _on_conf_change(self, _value: str) -> None:
+        val = self._conf_var.get()
+        self._conf_label.set(f"{val:.2f}")
+        self.detector.conf_threshold = val
+
     def apply_model_selection(self) -> None:
         selected_desc = self._model_combo_var.get()
         model_labels = [desc for _, desc in AVAILABLE_MODELS]
@@ -518,7 +539,7 @@ class DepotMonitorApp(tk.Tk):
         model_path = self._model_paths[idx]
         self.model_status_text.set(f"Cargando {model_path}…")
         self.update_idletasks()
-        self.detector = DepotDetector(model_path, CONF_THRESHOLD, IMG_SIZE, ALLOWED_LABELS)
+        self.detector = DepotDetector(model_path, self._conf_var.get(), IMG_SIZE, ALLOWED_LABELS)
         self.model_status_text.set(f"Modelo activo: {model_path}")
 
     def apply_camera_selection(self) -> None:
