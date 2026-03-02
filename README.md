@@ -19,7 +19,8 @@ Detecta camiones y autos con YOLO (You Only Look Once), monitorea ocupación de 
 | `app_config.py` | Configuración central |
 | `run_depot_monitor.bat` | Launcher Windows |
 | `requirements.txt` | Dependencias Python |
-| `RFID_logger/RFID_logger.ino` | Firmware Arduino Nano para lectores RFID |
+| `RFID_logger_ingress/RFID_logger_ingress.ino` | Firmware Arduino Nano (1 lector) — INGRESS |
+| `RFID_logger_egress/RFID_logger_egress.ino` | Firmware Arduino Nano (1 lector) — EGRESS |
 
 ---
 
@@ -149,9 +150,9 @@ Se guardan en `zones.json`.
 
 > Para el adaptador de niveles se puede usar el CD4504B o un divisor resistivo (1kΩ serie + 2kΩ a GND por canal). Resistencias de 10kΩ generan problemas de timing en SCK — usar 1kΩ/2kΩ o directamente el integrado.
 
-### Firmware (`RFID_logger/RFID_logger.ino`)
+### Firmware (`RFID_logger_ingress` / `RFID_logger_egress`)
 
-Lee UIDs de hasta 2 lectores RC522 y los envía por serial a 115200 baud en el formato:
+Lee UIDs de 1 lector RC522 y los envía por serial a 115200 baud en el formato:
 
 ```
 INGRESS,<UID_HEX>
