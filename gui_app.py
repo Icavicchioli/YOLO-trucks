@@ -2,12 +2,20 @@
 
 from __future__ import annotations
 
+from collections import deque
 from dataclasses import dataclass
+from datetime import datetime
 import time
 import tkinter as tk
 from tkinter import messagebox, ttk
 
 import cv2
+import matplotlib
+matplotlib.use("TkAgg")
+import matplotlib.dates
+import matplotlib.ticker
+from matplotlib.figure import Figure
+from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 from PIL import Image, ImageTk
 
 from app_config import (
@@ -68,15 +76,17 @@ class DepotMonitorApp(tk.Tk):
         self.running = True
 
         self.show_detections = tk.BooleanVar(value=True)
-        self.show_centroids = tk.BooleanVar(value=True)
-        self.show_zones = tk.BooleanVar(value=True)
-        self.show_warnings = tk.BooleanVar(value=True)
+        self.show_centroids = tk.BooleanVar(value=False)
+        self.show_zones = tk.BooleanVar(value=False)
 
-        self.warning_text = tk.StringVar(value="No warnings")
         self.rfid_status_text = tk.StringVar(value="RFID serial: idle")
         self.truck_zone_state: dict[str, str] = {k: "free" for k in TRUCK_ZONE_KEYS}
         self.depot_card_widgets: dict[str, tuple[tk.Frame, tk.Label, tk.Label, tk.Label]] = {}
+        self.dash_depot_card_widgets: dict[str, tuple[tk.Frame, tk.Label, tk.Label, tk.Label]] = {}
         self.rfid_bridge: RFIDSerialBridge | None = None
+
+        self.occupancy_history: deque[tuple[datetime, dict[str, str]]] = deque(maxlen=300)
+        self._last_history_ts = 0.0
 
         self.edit_mode = False
         self.edit_zone_name = tk.StringVar(value=list(self.zones.keys())[0])
@@ -93,6 +103,7 @@ class DepotMonitorApp(tk.Tk):
         self.after(350, self.poll_rfid_bridge)
 
         self.protocol("WM_DELETE_WINDOW", self.on_close)
+        self.after(3000, self._update_dashboard_charts)
         self.after(10, self.update_frame)
 
     def _configure_styles(self) -> None:
@@ -161,13 +172,43 @@ class DepotMonitorApp(tk.Tk):
 
     def _build_layout(self) -> None:
         self._build_banner()
-        self.columnconfigure(0, weight=3)
-        self.columnconfigure(1, weight=2)
+        self.columnconfigure(0, weight=1)
         self.rowconfigure(1, weight=1)
 
+        main_notebook = ttk.Notebook(self, style="App.TNotebook")
+        main_notebook.grid(row=1, column=0, sticky="nsew")
+
+        # ── Tab 0: Dashboard (full width, sin video) ──────────────────────
+        tab_dash = ttk.Frame(main_notebook, padding=8, style="App.TFrame")
+        main_notebook.add(tab_dash, text="Dashboard")
+        self._build_dashboard_tab(tab_dash)
+
+        # ── Tab 1: Series de tiempo ───────────────────────────────────────
+        tab_series = ttk.Frame(main_notebook, padding=8, style="App.TFrame")
+        main_notebook.add(tab_series, text="Series de tiempo")
+        self._build_timeseries_tab(tab_series)
+
+        self._draw_initial_charts()
+
+        # ── Tab 2: Monitor (video + RFID) ─────────────────────────────────
+        tab_monitor = ttk.Frame(main_notebook, style="App.TFrame")
+        main_notebook.add(tab_monitor, text="Monitor")
+        self._build_monitor_tab(tab_monitor)
+
+        # ── Tab 3: Configuración ──────────────────────────────────────────
+        tab_cfg = ttk.Frame(main_notebook, padding=8, style="App.TFrame")
+        tab_cfg.columnconfigure(0, weight=1)
+        main_notebook.add(tab_cfg, text="Configuración")
+        self._build_config_tab(tab_cfg)
+
+    def _build_monitor_tab(self, parent: ttk.Frame) -> None:
+        parent.columnconfigure(0, weight=3)
+        parent.columnconfigure(1, weight=2)
+        parent.rowconfigure(0, weight=1)
+
         # ── Izquierda: video + checkboxes + depot cards ───────────────────
-        left = ttk.Frame(self, padding=(10, 10, 10, 40), style="App.TFrame")
-        left.grid(row=1, column=0, sticky="nsew")
+        left = ttk.Frame(parent, padding=(10, 10, 10, 10), style="App.TFrame")
+        left.grid(row=0, column=0, sticky="nsew")
         left.rowconfigure(0, weight=1)
         left.columnconfigure(0, weight=1)
 
@@ -182,67 +223,23 @@ class DepotMonitorApp(tk.Tk):
         ttk.Checkbutton(controls, text="Detecciones", variable=self.show_detections).grid(row=0, column=0, sticky="w")
         ttk.Checkbutton(controls, text="Centroides", variable=self.show_centroids).grid(row=0, column=1, sticky="w")
         ttk.Checkbutton(controls, text="Zonas", variable=self.show_zones).grid(row=0, column=2, sticky="w")
-        ttk.Checkbutton(controls, text="Alertas", variable=self.show_warnings).grid(row=0, column=3, sticky="w")
 
         depot_frame = ttk.LabelFrame(left, text="Estado de depósitos", style="App.TLabelframe")
         depot_frame.grid(row=2, column=0, sticky="ew", pady=(8, 0))
         depot_frame.columnconfigure(0, weight=1)
         self.depot_cards_container = ttk.Frame(depot_frame)
-        self.depot_cards_container.grid(row=0, column=0)   # sin sticky → centrado
+        self.depot_cards_container.grid(row=0, column=0, sticky="ew")
         self.depot_cards_container.columnconfigure((0, 1, 2), weight=1)
         self._build_depot_indicators()
 
-        # ── Derecha: notebook (Operación / Configuración) ─────────────────
-        right = ttk.Frame(self, padding=(0, 10, 10, 10), style="App.TFrame")
-        right.grid(row=1, column=1, sticky="nsew")
+        # ── Derecha: RFID log ─────────────────────────────────────────────
+        right = ttk.Frame(parent, padding=(0, 10, 10, 10), style="App.TFrame")
+        right.grid(row=0, column=1, sticky="nsew")
         right.columnconfigure(0, weight=1)
         right.rowconfigure(0, weight=1)
 
-        notebook = ttk.Notebook(right, style="App.TNotebook")
-        notebook.grid(row=0, column=0, sticky="nsew")
-
-        # ── Tab 1: Operación ──────────────────────────────────────────────
-        tab_op = ttk.Frame(notebook, padding=8, style="App.TFrame")
-        tab_op.columnconfigure(0, weight=1)
-        tab_op.rowconfigure(1, weight=1)
-        notebook.add(tab_op, text="Operación")
-
-        warning_frame = tk.Frame(
-            tab_op,
-            bg="#ffffff",
-            bd=1,
-            relief="solid",
-            padx=10,
-            pady=8,
-            highlightthickness=1,
-            highlightbackground="#d7dee6",
-            highlightcolor="#d7dee6",
-        )
-        warning_frame.grid(row=0, column=0, sticky="ew", pady=(0, 8))
-        warning_frame.grid_columnconfigure(0, weight=1)
-        self.warning_title_label = tk.Label(
-            warning_frame,
-            text="Alertas",
-            bg="#ffffff",
-            fg="#203045",
-            font=("Segoe UI", 10, "bold"),
-            anchor="w",
-        )
-        self.warning_title_label.grid(row=0, column=0, sticky="w")
-        self.warning_value_label = tk.Label(
-            warning_frame,
-            textvariable=self.warning_text,
-            bg="#ffffff",
-            fg="#5f6d7b",
-            font=("Segoe UI", 10),
-            anchor="w",
-            justify="left",
-            wraplength=320,
-        )
-        self.warning_value_label.grid(row=1, column=0, sticky="w", pady=(2, 0))
-
-        rfid_frame = ttk.LabelFrame(tab_op, text="RFID ingress/egress", style="App.TLabelframe")
-        rfid_frame.grid(row=1, column=0, sticky="nsew")
+        rfid_frame = ttk.LabelFrame(right, text="RFID ingress/egress", style="App.TLabelframe")
+        rfid_frame.grid(row=0, column=0, sticky="nsew")
         rfid_frame.columnconfigure(0, weight=1)
         rfid_frame.rowconfigure(2, weight=1)
 
@@ -270,12 +267,8 @@ class DepotMonitorApp(tk.Tk):
             self.rfid_tree.column(col, width=width, anchor="w")
         self.rfid_tree.grid(row=2, column=0, sticky="nsew")
 
-        # ── Tab 2: Configuración ──────────────────────────────────────────
-        tab_cfg = ttk.Frame(notebook, padding=8, style="App.TFrame")
-        tab_cfg.columnconfigure(0, weight=1)
-        notebook.add(tab_cfg, text="Configuración")
-
-        model_frame = ttk.LabelFrame(tab_cfg, text="Modelo YOLO", style="App.TLabelframe")
+    def _build_config_tab(self, parent: ttk.Frame) -> None:
+        model_frame = ttk.LabelFrame(parent, text="Modelo YOLO", style="App.TLabelframe")
         model_frame.grid(row=0, column=0, sticky="ew")
         model_frame.columnconfigure(0, weight=1)
 
@@ -302,7 +295,7 @@ class DepotMonitorApp(tk.Tk):
             row=1, column=0, columnspan=2, sticky="w", pady=(6, 0)
         )
 
-        det_frame = ttk.LabelFrame(tab_cfg, text="Detección", style="App.TLabelframe")
+        det_frame = ttk.LabelFrame(parent, text="Detección", style="App.TLabelframe")
         det_frame.grid(row=1, column=0, sticky="ew", pady=(10, 0))
         det_frame.columnconfigure(1, weight=1)
 
@@ -317,7 +310,7 @@ class DepotMonitorApp(tk.Tk):
         ).grid(row=0, column=1, sticky="ew")
         ttk.Label(det_frame, textvariable=self._conf_label, width=4).grid(row=0, column=2, padx=(6, 0))
 
-        camera_frame = ttk.LabelFrame(tab_cfg, text="Cámara", style="App.TLabelframe")
+        camera_frame = ttk.LabelFrame(parent, text="Cámara", style="App.TLabelframe")
         camera_frame.grid(row=2, column=0, sticky="ew", pady=(10, 0))
         camera_frame.columnconfigure(0, weight=1)
 
@@ -338,7 +331,7 @@ class DepotMonitorApp(tk.Tk):
             row=1, column=0, columnspan=3, sticky="w", pady=(6, 0)
         )
 
-        zone_frame = ttk.LabelFrame(tab_cfg, text="Editor de zonas", style="App.TLabelframe")
+        zone_frame = ttk.LabelFrame(parent, text="Editor de zonas", style="App.TLabelframe")
         zone_frame.grid(row=3, column=0, sticky="ew", pady=(10, 0))
         zone_frame.columnconfigure(0, weight=1)
 
@@ -359,6 +352,13 @@ class DepotMonitorApp(tk.Tk):
         )
         ttk.Button(zone_frame, text="Resetear zonas", command=self.reset_zones).grid(
             row=4, column=0, sticky="ew", pady=(6, 0)
+        )
+
+        rfid_mgmt_frame = ttk.LabelFrame(parent, text="Registro RFID", style="App.TLabelframe")
+        rfid_mgmt_frame.grid(row=4, column=0, sticky="ew", pady=(10, 0))
+        rfid_mgmt_frame.columnconfigure(0, weight=1)
+        ttk.Button(rfid_mgmt_frame, text="Eliminar todas las entradas", command=self.clear_rfid_log).grid(
+            row=0, column=0, sticky="ew"
         )
 
     def on_mouse_down(self, event: tk.Event) -> None:
@@ -407,11 +407,22 @@ class DepotMonitorApp(tk.Tk):
         self.tag_entry.delete(0, tk.END)
         self.refresh_rfid_table()
 
+    def clear_rfid_log(self) -> None:
+        if not messagebox.askyesno("Confirmar", "¿Eliminar todas las entradas del registro RFID?"):
+            return
+        from pathlib import Path
+        csv_file = Path(RFID_LOG_PATH)
+        if csv_file.exists():
+            csv_file.unlink()
+        self.refresh_rfid_table()
+
     def refresh_rfid_table(self) -> None:
-        for row_id in self.rfid_tree.get_children():
-            self.rfid_tree.delete(row_id)
-        for row in read_rfid_events(RFID_LOG_PATH, limit=250):
-            self.rfid_tree.insert("", tk.END, values=(row["timestamp"], row["event"], row["tag_id"]))
+        rows = read_rfid_events(RFID_LOG_PATH, limit=250)
+        for tree in (self.rfid_tree, self.dash_rfid_tree):
+            for row_id in tree.get_children():
+                tree.delete(row_id)
+            for row in rows:
+                tree.insert("", tk.END, values=(row["timestamp"], row["event"], row["tag_id"]))
 
     def start_rfid_bridge(self) -> None:
         if not RFID_SERIAL_AUTOSTART:
@@ -555,6 +566,141 @@ class DepotMonitorApp(tk.Tk):
         if not self.connect_camera(index):
             messagebox.showerror("Camera", f"Could not open camera {index}")
 
+    def _build_dashboard_tab(self, parent: ttk.Frame) -> None:
+        # Dashboard sin series temporales por depósito.
+        parent.columnconfigure(0, weight=50)
+        parent.columnconfigure(1, weight=50)
+        parent.rowconfigure(0, weight=0)
+        parent.rowconfigure(1, weight=1)
+
+        # ── Status cards (row 0, col 0) ────────────────────────────────────
+        dash_depot_frame = ttk.LabelFrame(parent, text="Estado de depósitos", style="App.TLabelframe")
+        dash_depot_frame.grid(row=0, column=0, sticky="ew", pady=(0, 6), padx=(0, 4))
+        dash_depot_frame.columnconfigure(0, weight=1)
+        dash_cards_container = ttk.Frame(dash_depot_frame)
+        dash_cards_container.grid(row=0, column=0, sticky="ew")
+        dash_cards_container.columnconfigure((0, 1, 2), weight=1)
+
+        for idx, key in enumerate(TRUCK_ZONE_KEYS):
+            dash_cards_container.columnconfigure(idx, weight=1)
+            card = tk.Frame(
+                dash_cards_container,
+                bg="#c94847", bd=1, relief="solid",
+                padx=12, pady=8,
+                highlightthickness=1, highlightbackground="#b73e3e", highlightcolor="#b73e3e",
+            )
+            card.grid(row=0, column=idx, sticky="ew", padx=(0, 6 if idx < len(TRUCK_ZONE_KEYS) - 1 else 0))
+            card.columnconfigure(0, weight=1)
+            title = tk.Label(card, text=f"Depósito {idx + 1}", bg="#c94847", fg="white",
+                             font=("Segoe UI", 11, "bold"), anchor="w")
+            title.grid(row=0, column=0, sticky="w")
+            status = tk.Label(card, text="No disponible", bg="#c94847", fg="white",
+                              font=("Segoe UI", 10), anchor="w", width=14)
+            status.grid(row=1, column=0, sticky="w", pady=(2, 0))
+            badge = tk.Label(card, text="NO DISPONIBLE", bg="#a63636", fg="white",
+                             font=("Segoe UI", 8, "bold"), padx=8, pady=3, width=13, anchor="center")
+            badge.grid(row=0, column=1, rowspan=2, sticky="e")
+            self.dash_depot_card_widgets[key] = (card, title, status, badge)
+
+        # ── Total occupancy chart (row 0, col 1) ──────────────────────────
+        fig_total = Figure(figsize=(6.0, 2.2), dpi=90, facecolor="#f0f2f5")
+        self._ax_total = fig_total.add_subplot(111)
+        self._canvas_total = FigureCanvasTkAgg(fig_total, master=parent)
+        self._canvas_total.get_tk_widget().grid(row=0, column=1, sticky="nsew", pady=(0, 4))
+
+        # ── Bottom left: torta (row 1, col 0) ─────────────────────────────
+        pie_container = ttk.Frame(parent, style="App.TFrame")
+        pie_container.grid(row=1, column=0, sticky="nsew", padx=(0, 4))
+        pie_container.columnconfigure(0, weight=1)
+        pie_container.rowconfigure(0, weight=1)
+
+        fig_pie = Figure(figsize=(5.4, 4.8), dpi=90, facecolor="#f0f2f5")
+        fig_pie.subplots_adjust(left=0.05, right=0.95, top=0.90, bottom=0.06)
+        self._ax_pie = fig_pie.add_subplot(111)
+        self._canvas_pie = FigureCanvasTkAgg(fig_pie, master=pie_container)
+        self._canvas_pie.get_tk_widget().grid(row=0, column=0, sticky="nsew")
+
+        # ── Bottom right: RFID (row 1, col 1) ─────────────────────────────
+        dash_rfid_frame = ttk.LabelFrame(parent, text="RFID ingress/egress", style="App.TLabelframe")
+        dash_rfid_frame.grid(row=1, column=1, sticky="nsew", padx=(4, 0))
+        dash_rfid_frame.columnconfigure(0, weight=1)
+        dash_rfid_frame.rowconfigure(0, weight=1)
+        self.dash_rfid_tree = ttk.Treeview(
+            dash_rfid_frame,
+            columns=("timestamp", "event", "tag_id"),
+            show="headings",
+            height=10,
+        )
+        for col, width in (("timestamp", 130), ("event", 70), ("tag_id", 100)):
+            self.dash_rfid_tree.heading(col, text=col)
+            self.dash_rfid_tree.column(col, width=width, anchor="w")
+        self.dash_rfid_tree.grid(row=0, column=0, sticky="nsew")
+
+    def _build_timeseries_tab(self, parent: ttk.Frame) -> None:
+        parent.columnconfigure(0, weight=1)
+        parent.rowconfigure(0, weight=1)
+
+        series_frame = ttk.LabelFrame(parent, text="Series temporales por depósito", style="App.TLabelframe")
+        series_frame.grid(row=0, column=0, sticky="nsew")
+        series_frame.columnconfigure(0, weight=1)
+        series_frame.rowconfigure(0, weight=1)
+
+        self._fig_zones = Figure(figsize=(5.8, 7.0), dpi=90, facecolor="#f0f2f5")
+        self._fig_zones.subplots_adjust(hspace=0.22, top=0.97, bottom=0.10, left=0.10, right=0.98)
+        self._axes_zones = []
+        for i in range(len(TRUCK_ZONE_KEYS)):
+            if i == 0:
+                ax = self._fig_zones.add_subplot(len(TRUCK_ZONE_KEYS), 1, i + 1)
+            else:
+                ax = self._fig_zones.add_subplot(len(TRUCK_ZONE_KEYS), 1, i + 1, sharex=self._axes_zones[0])
+            self._axes_zones.append(ax)
+        self._canvas_zones = FigureCanvasTkAgg(self._fig_zones, master=series_frame)
+        self._canvas_zones.get_tk_widget().grid(row=0, column=0, sticky="nsew")
+
+    def _draw_initial_charts(self) -> None:
+        # Total
+        self._ax_total.set_facecolor("#f0f2f5")
+        self._ax_total.set_title("Zonas ocupadas — total", fontsize=10)
+        self._ax_total.set_ylabel("N°", fontsize=8)
+        self._ax_total.set_ylim(0, len(TRUCK_ZONE_KEYS) + 0.3)
+        self._ax_total.tick_params(labelsize=7)
+        self._ax_total.figure.tight_layout(pad=1.2)
+        self._canvas_total.draw()
+
+        # Pie
+        self._ax_pie.set_facecolor("#f0f2f5")
+        self._ax_pie.pie(
+            [len(TRUCK_ZONE_KEYS)],
+            labels=["Libre"],
+            colors=["#2f9e58"],
+            autopct="%1.0f%%",
+            startangle=90,
+            radius=1.10,
+            pctdistance=0.68,
+            labeldistance=1.05,
+            textprops={"fontsize": 9},
+        )
+        self._ax_pie.set_aspect("equal", adjustable="box")
+        self._ax_pie.set_title("Ocupación actual", fontsize=10, pad=8)
+        self._canvas_pie.draw()
+
+        # Zonas individuales
+        zone_colors = ["#4e8ef7", "#f7a74e", "#a74ef7"]
+        for i, ax in enumerate(self._axes_zones):
+            ax.set_facecolor("#f0f2f5")
+            ax.set_title(f"Depósito {i + 1}", fontsize=8, pad=3)
+            ax.set_ylim(-0.05, 1.05)
+            ax.set_yticks([0, 1])
+            ax.set_yticklabels(["Libre", "Ocup."], fontsize=6)
+            ax.grid(axis="y", color="#d8dee6", linewidth=0.7, alpha=0.8)
+            if i < len(TRUCK_ZONE_KEYS) - 1:
+                ax.tick_params(axis="x", labelbottom=False)
+            else:
+                ax.tick_params(axis="x", labelsize=7)
+                ax.set_xlabel("Hora", fontsize=7, labelpad=2)
+            ax.tick_params(labelsize=6)
+        self._canvas_zones.draw()
+
     def _build_depot_indicators(self) -> None:
         for idx, key in enumerate(TRUCK_ZONE_KEYS):
             self.depot_cards_container.columnconfigure(idx, weight=1)
@@ -588,6 +734,7 @@ class DepotMonitorApp(tk.Tk):
                 fg="white",
                 font=("Segoe UI", 10),
                 anchor="w",
+                width=14,
             )
             status.grid(row=1, column=0, sticky="w", pady=(2, 0))
             badge = tk.Label(
@@ -598,55 +745,43 @@ class DepotMonitorApp(tk.Tk):
                 font=("Segoe UI", 8, "bold"),
                 padx=8,
                 pady=3,
+                width=13,
+                anchor="center",
             )
             badge.grid(row=0, column=1, rowspan=2, sticky="e")
 
             self.depot_card_widgets[key] = (card, title, status, badge)
 
-    def update_depot_indicators(self) -> None:
-        color_available = "#2f9e58"
-        color_unavailable = "#c94847"
-        for key in TRUCK_ZONE_KEYS:
-            state = self.truck_zone_state.get(key, "free")
-            available = state == "free"
-            color = color_available if available else color_unavailable
-            status_text = "Disponible" if available else "No disponible"
-            widgets = self.depot_card_widgets.get(key)
-            if widgets is None:
-                continue
-            badge_bg = "#257b44" if available else "#a63636"
-            badge_text = "DISPONIBLE" if available else "NO DISPONIBLE"
-            border_color = "#2a6f44" if available else "#b73e3e"
-            card, title, status, badge = widgets
-            card.configure(bg=color)
-            card.configure(highlightbackground=border_color, highlightcolor=border_color)
-            title.configure(bg=color)
-            status.configure(bg=color, text=status_text)
-            badge.configure(bg=badge_bg, text=badge_text)
+    def _apply_card_state(self, widgets: tuple, available: bool) -> None:
+        color = "#2f9e58" if available else "#c94847"
+        badge_bg = "#257b44" if available else "#a63636"
+        badge_text = "DISPONIBLE" if available else "NO DISPONIBLE"
+        border_color = "#2a6f44" if available else "#b73e3e"
+        status_text = "Disponible" if available else "No disponible"
+        card, title, status, badge = widgets
+        card.configure(bg=color, highlightbackground=border_color, highlightcolor=border_color)
+        title.configure(bg=color)
+        status.configure(bg=color, text=status_text)
+        badge.configure(bg=badge_bg, text=badge_text)
 
-    def _update_warning_panel(self, warnings: list[str]) -> None:
-        has_warning = bool(warnings)
-        value_color = "#b32020" if has_warning else "#5f6d7b"
-        panel_border = "#e2b7b7" if has_warning else "#d7dee6"
-        self.warning_value_label.configure(fg=value_color)
-        self.warning_title_label.configure(fg="#8f1f1f" if has_warning else "#203045")
-        self.warning_value_label.master.configure(
-            highlightbackground=panel_border,
-            highlightcolor=panel_border,
-        )
+    def update_depot_indicators(self) -> None:
+        for key in TRUCK_ZONE_KEYS:
+            available = self.truck_zone_state.get(key, "free") == "free"
+            for widget_dict in (self.depot_card_widgets, self.dash_depot_card_widgets):
+                widgets = widget_dict.get(key)
+                if widgets is not None:
+                    self._apply_card_state(widgets, available)
 
     def update_frame(self) -> None:
         if not self.running:
             return
 
         if self.cap is None:
-            self.warning_text.set("No camera connected")
             self.after(200, self.update_frame)
             return
 
         ret, frame = self.cap.read()
         if not ret:
-            self.warning_text.set("Camera read failed")
             self.after(200, self.update_frame)
             return
 
@@ -663,11 +798,12 @@ class DepotMonitorApp(tk.Tk):
         eval_data = self.detector.evaluate(self.current_detections, self.zones)
         self.truck_zone_state = eval_data["truck_zone_state"]
         self.update_depot_indicators()
-        warnings = eval_data["warnings"]
-        self.warning_text.set(", ".join(warnings) if warnings else "No warnings")
-        self._update_warning_panel(warnings)
 
-        output = self.draw_overlays(frame, warnings)
+        if now - self._last_history_ts >= 2.0:
+            self.occupancy_history.append((datetime.now(), dict(self.truck_zone_state)))
+            self._last_history_ts = now
+
+        output = self.draw_overlays(frame)
         rgb = cv2.cvtColor(output, cv2.COLOR_BGR2RGB)
         photo = ImageTk.PhotoImage(image=Image.fromarray(rgb))
         self.video_label.configure(image=photo)
@@ -711,7 +847,95 @@ class DepotMonitorApp(tk.Tk):
                     DetectionTrack(detection=det, ttl_frames=self.detection_ttl_frames)
                 )
 
-    def draw_overlays(self, frame, warnings: list[str]):
+    def _update_dashboard_charts(self) -> None:
+        if not self.running:
+            return
+
+        # ── Pie chart ─────────────────────────────────────────────────────
+        occupied = sum(1 for s in self.truck_zone_state.values() if s == "occupied")
+        free = len(TRUCK_ZONE_KEYS) - occupied
+        self._ax_pie.clear()
+        self._ax_pie.set_facecolor("#f0f2f5")
+        if occupied == 0 and free == 0:
+            self._ax_pie.text(0, 0, "Sin datos", ha="center", va="center", fontsize=9)
+        else:
+            labels, sizes, colors = [], [], []
+            if occupied:
+                labels.append(f"Ocupado ({occupied})")
+                sizes.append(occupied)
+                colors.append("#c94847")
+            if free:
+                labels.append(f"Libre ({free})")
+                sizes.append(free)
+                colors.append("#2f9e58")
+            self._ax_pie.pie(
+                sizes, labels=labels, colors=colors,
+                autopct="%1.0f%%", startangle=90,
+                radius=1.10, pctdistance=0.68, labeldistance=1.05,
+                textprops={"fontsize": 9},
+            )
+        self._ax_pie.set_aspect("equal", adjustable="box")
+        self._ax_pie.set_title("Ocupación actual", fontsize=10, pad=6)
+        self._canvas_pie.draw()
+
+        # ── Total occupancy (top, full width) ────────────────────────────
+        self._ax_total.clear()
+        self._ax_total.set_facecolor("#f0f2f5")
+        if len(self.occupancy_history) >= 2:
+            times = [t for t, _ in self.occupancy_history]
+            totals = [sum(1 for s in state.values() if s == "occupied") for _, state in self.occupancy_history]
+            self._ax_total.fill_between(times, totals, step="post", alpha=0.4, color="#c94847")
+            self._ax_total.step(times, totals, where="post", color="#c94847", linewidth=2)
+            self._ax_total.set_ylim(0, len(TRUCK_ZONE_KEYS) + 0.3)
+            self._ax_total.yaxis.set_major_locator(matplotlib.ticker.MaxNLocator(integer=True))
+            total_locator = matplotlib.dates.AutoDateLocator(minticks=3, maxticks=6)
+            self._ax_total.xaxis.set_major_locator(total_locator)
+            self._ax_total.xaxis.set_major_formatter(matplotlib.dates.DateFormatter("%H:%M"))
+        else:
+            self._ax_total.text(0.5, 0.5, "Esperando datos…", ha="center", va="center",
+                                transform=self._ax_total.transAxes, fontsize=9)
+        self._ax_total.set_title("Zonas ocupadas — total", fontsize=10)
+        self._ax_total.set_ylabel("N°", fontsize=8)
+        self._ax_total.tick_params(axis="x", labelsize=7, rotation=0)
+        self._ax_total.tick_params(axis="y", labelsize=7)
+        self._ax_total.figure.tight_layout(pad=1.2)
+        self._canvas_total.draw()
+
+        # ── Individual zone charts (bottom right) ─────────────────────────
+        zone_colors = ["#4e8ef7", "#f7a74e", "#a74ef7"]
+        has_data = len(self.occupancy_history) >= 2
+        zone_locator = matplotlib.dates.AutoDateLocator(minticks=3, maxticks=5)
+        zone_formatter = matplotlib.dates.DateFormatter("%H:%M")
+        times = [t for t, _ in self.occupancy_history] if has_data else []
+        for i, (key, ax) in enumerate(zip(TRUCK_ZONE_KEYS, self._axes_zones)):
+            ax.clear()
+            ax.set_facecolor("#f0f2f5")
+            ax.set_ylim(-0.05, 1.05)
+            ax.set_yticks([0, 1])
+            ax.set_yticklabels(["Libre", "Ocup."], fontsize=6)
+            ax.grid(axis="y", color="#d8dee6", linewidth=0.7, alpha=0.8)
+            if has_data:
+                vals = [1 if s.get(key) == "occupied" else 0 for _, s in self.occupancy_history]
+                ax.fill_between(times, vals, step="post", alpha=0.55, color=zone_colors[i])
+                ax.step(times, vals, where="post", color=zone_colors[i], linewidth=1.5)
+                ax.xaxis.set_major_locator(zone_locator)
+                ax.xaxis.set_major_formatter(zone_formatter)
+            else:
+                ax.text(0.5, 0.5, "Esperando datos…", ha="center", va="center",
+                        transform=ax.transAxes, fontsize=7)
+            ax.set_title(f"Depósito {i + 1}", fontsize=8, pad=3)
+            if i < len(TRUCK_ZONE_KEYS) - 1:
+                ax.tick_params(axis="x", labelbottom=False)
+            else:
+                ax.tick_params(axis="x", labelsize=7, rotation=0)
+                ax.set_xlabel("Hora", fontsize=7, labelpad=2)
+            ax.tick_params(axis="y", labelsize=6)
+        self._fig_zones.subplots_adjust(hspace=0.22, top=0.97, bottom=0.10, left=0.10, right=0.98)
+        self._canvas_zones.draw()
+
+        self.after(3000, self._update_dashboard_charts)
+
+    def draw_overlays(self, frame):
         output = frame.copy()
 
         if self.show_zones.get():
@@ -719,14 +943,7 @@ class DepotMonitorApp(tk.Tk):
                 x1, y1, x2, y2 = box
                 if key.startswith("truck_space"):
                     zone_state = self.truck_zone_state.get(key, "free")
-                    if zone_state == "occupied":
-                        color = (0, 200, 0)  # green
-                    elif zone_state == "warning":
-                        color = (0, 255, 255)  # yellow
-                    else:
-                        color = (0, 0, 255)  # red
-                elif key == "warn_car":
-                    color = (0, 0, 255)
+                    color = (0, 200, 0) if zone_state == "occupied" else (0, 0, 255)
                 else:
                     color = (180, 105, 255)
                 cv2.rectangle(output, (x1, y1), (x2, y2), color, 2)
@@ -752,17 +969,6 @@ class DepotMonitorApp(tk.Tk):
         if self.edit_mode and self.temp_box:
             x1, y1, x2, y2 = normalize_box(self.temp_box, FRAME_WIDTH, FRAME_HEIGHT)
             cv2.rectangle(output, (x1, y1), (x2, y2), (255, 255, 255), 2)
-
-        if self.show_warnings.get() and warnings:
-            cv2.putText(
-                output,
-                " | ".join(warnings),
-                (10, 24),
-                cv2.FONT_HERSHEY_SIMPLEX,
-                0.7,
-                (0, 0, 255),
-                2,
-            )
 
         return output
 
