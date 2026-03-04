@@ -1,6 +1,6 @@
 """Application configuration for the depot monitor."""
 
-CAMERA_INDEX = 0
+CAMERA_INDEX = 1
 
 # Modelos disponibles: (archivo, descripción)
 # Más pequeño = más rápido en CPU. Más grande = más preciso.
@@ -11,12 +11,12 @@ AVAILABLE_MODELS = (
     ("yolov8l.pt", "YOLOv8l  —  Large"),
     ("yolov8x.pt", "YOLOv8x  —  XLarge  (más preciso, requiere GPU)"),
 )
-MODEL_PATH = AVAILABLE_MODELS[0][0]  # cambiar índice para usar otro modelo por defecto
+MODEL_PATH = AVAILABLE_MODELS[2][0]  # cambiar índice para usar otro modelo por defecto
 # hay que cambiar el primero, asi agarra la fila entera
 CONF_THRESHOLD = 0.15
 IMG_SIZE = 640
 ALLOWED_LABELS = ("truck", "car")
-DETECTION_TTL_FRAMES = 10
+DETECTION_TTL_FRAMES = 40
 
 # Keep this as requested: detection cycles per second.
 TARGET_DPS = 2

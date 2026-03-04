@@ -61,40 +61,18 @@ class DepotDetector:
 
     def evaluate(self, detections: List[Detection], zones: Dict[str, List[int]]) -> Dict[str, object]:
         truck_occupancy: Dict[str, bool] = {}
-        zone_has_warning_object: Dict[str, bool] = {}
+        zone_state: Dict[str, str] = {}
         for key in TRUCK_ZONE_KEYS:
             box = zones[key]
             occupied = any(
-                det.label == "truck" and point_in_box(det.centroid[0], det.centroid[1], box)
-                for det in detections
-            )
-            warning_in_zone = any(
-                det.label != "truck" and point_in_box(det.centroid[0], det.centroid[1], box)
+                point_in_box(det.centroid[0], det.centroid[1], box)
                 for det in detections
             )
             truck_occupancy[key] = occupied
-            zone_has_warning_object[key] = warning_in_zone
-
-        warning_messages: List[str] = []
-        for det in detections:
-            x, y = det.centroid
-            if det.label == "truck":
-                continue
-            if det.label == "car" and point_in_box(x, y, zones["warn_car"]):
-                warning_messages.append("car detected")
-
-        unique_warnings = list(dict.fromkeys(warning_messages))
-        zone_state: Dict[str, str] = {}
-        for key in TRUCK_ZONE_KEYS:
-            if zone_has_warning_object[key]:
-                zone_state[key] = "warning"
-            elif truck_occupancy[key]:
-                zone_state[key] = "occupied"
-            else:
-                zone_state[key] = "free"
+            zone_state[key] = "occupied" if occupied else "free"
 
         return {
             "truck_occupancy": truck_occupancy,
-            "warnings": unique_warnings,
+            "warnings": [],
             "truck_zone_state": zone_state,
         }
