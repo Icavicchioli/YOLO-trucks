@@ -66,7 +66,7 @@ void printReaderStatus(MFRC522 &r, bool &okFlag) {
 }
 
 void setup() {
-  Serial.begin(115200);
+  Serial.begin(9600);
   delay(300);
 
   SPI.begin();
@@ -88,7 +88,11 @@ void setup() {
   reader.PCD_SetAntennaGain(MFRC522::RxGain_max);
   printReaderStatus(reader, readerOk);
 
-  Serial.println("RFID_LOGGER_READY");
+  if (!readerOk) {
+    Serial.println("RFID_LOGGER_NO_READER");
+  } else {
+    Serial.println("RFID_LOGGER_READY");
+  }
 }
 
 void loop() {

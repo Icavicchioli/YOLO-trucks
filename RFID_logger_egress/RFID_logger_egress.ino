@@ -1,43 +1,36 @@
 /*
   RFID Logger (Single Reader) - EGRESS
-  Arduino Nano + 1 x MFRC522 (RC522)
+  NodeMCU LoLin V3 (ESP8266) + 1 x MFRC522 (RC522)
 
-  Wiring (Arduino Nano):
-    - SCK  -> D13  [level shift 5V->3.3V]
-    - MISO -> D12  [direct]
-    - MOSI -> D11  [level shift 5V->3.3V]
-    - SS   -> D8   [level shift 5V->3.3V]
-    - RST  -> D7   [level shift 5V->3.3V]
-    - 3.3V -> 3.3V (stable regulator recommended)
+  Wiring (NodeMCU LoLin V3):
+    - SCK  -> D5  (GPIO14)
+    - MISO -> D6  (GPIO12)
+    - MOSI -> D7  (GPIO13)
+    - SS   -> D8  (GPIO15)  <- CS / SDA for RC522 (recommended)
+    - RST  -> D3  (GPIO0)   <- reset line (can also use D4 but ensure proper boot state)
+    - 3.3V -> 3V3 (stable regulator recommended)
     - GND  -> GND
 
-  Serial output (115200):
-    EGRESS,<UID_HEX>
-
-  Note:
-  - Avoid MOSFET bidirectional shifters (e.g., HW-221 BSS138) on SPI; use unidirectional shifting
-    (CD4504B / 74LVC / fast resistor dividers like 1k series + 2k to GND).
+  Notes:
+    - Uses hardware SPI. Do not remap SCK/MOSI/MISO.
+    - SS must be D8 (GPIO15) if you want the common wiring that avoids SPI/boot issues.
 */
 
 #include <SPI.h>
 #include <MFRC522.h>
 
-constexpr byte SS_PIN = 8;
-constexpr byte RST_PIN = 7;
-constexpr const char *EVENT_NAME = "EGRESS";
+// Use NodeMCU Dx labels for clarity
+constexpr uint8_t SS_PIN  = D8; // SDA/SS -> D8 (GPIO15)
+constexpr uint8_t RST_PIN = D3; // RST   -> D3 (GPIO0)
 
+constexpr const char *EVENT_NAME = "EGRESS";
 constexpr unsigned long DUPLICATE_BLOCK_MS = 1200;
-constexpr byte SPI_CLOCK_DIV = SPI_CLOCK_DIV16;
 
 #ifndef RFID_DEBUG
 #define RFID_DEBUG 0
 #endif
 
 MFRC522 reader(SS_PIN, RST_PIN);
-
-String lastUid = "";
-unsigned long lastTs = 0;
-bool readerOk = false;
 
 String uidToHex(const MFRC522::Uid &uid) {
   String out = "";
@@ -66,17 +59,19 @@ void printReaderStatus(MFRC522 &r, bool &okFlag) {
 }
 
 void setup() {
-  Serial.begin(115200);
+  Serial.begin(9600);
   delay(300);
 
-  SPI.begin();
+  // Initialize SPI (hardware SPI pins on NodeMCU are fixed: D5/D6/D7)
+  SPI.begin();                      // SCK = D5, MISO = D6, MOSI = D7
   SPI.setDataMode(SPI_MODE0);
-  SPI.setClockDivider(SPI_CLOCK_DIV);
+  SPI.setFrequency(4000000);        // 4 MHz (adjust if needed)
 
   pinMode(SS_PIN, OUTPUT);
-  digitalWrite(SS_PIN, HIGH);
+  digitalWrite(SS_PIN, HIGH); // deselect RC522
   pinMode(RST_PIN, OUTPUT);
 
+  // Hardware reset of RC522
   Serial.print("Resetting RC522... ");
   digitalWrite(RST_PIN, LOW);
   delay(120);
@@ -86,14 +81,23 @@ void setup() {
   reader.PCD_Init();
   reader.PCD_AntennaOn();
   reader.PCD_SetAntennaGain(MFRC522::RxGain_max);
+
+  bool readerOk = false;
   printReaderStatus(reader, readerOk);
 
-  Serial.println("RFID_LOGGER_READY");
+  if (!readerOk) {
+    Serial.println("RFID_LOGGER_NO_READER");
+  } else {
+    Serial.println("RFID_LOGGER_READY");
+  }
 }
 
-void loop() {
-  if (!readerOk) return;
+String lastUid = "";
+unsigned long lastTs = 0;
 
+void loop() {
+  // If reader not responding, skip polling (but we didn't keep persistent flag here)
+  // Standard flow:
   if (!reader.PICC_IsNewCardPresent()) return;
   if (!reader.PICC_ReadCardSerial()) {
     if (RFID_DEBUG) Serial.println("READ_FAIL");
@@ -114,4 +118,3 @@ void loop() {
   haltReader(reader);
   delay(5);
 }
-

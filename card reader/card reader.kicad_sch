@@ -626,13 +626,14 @@
 					(justify left bottom)
 				)
 			)
-			(property "Value" "RFID-RC522"
-				(at -7.62 -15.24 0)
+			(property "Value" ""
+				(at 0 0 0)
 				(effects
 					(font
 						(size 1.27 1.27)
 					)
-					(justify left bottom)
+					(justify bottom)
+					(hide yes)
 				)
 			)
 			(property "Footprint" "RFID-RC522:RFID-RC522"
@@ -734,16 +735,6 @@
 				)
 			)
 			(property "Check_prices" "https://www.snapeda.com/parts/RFID-RC522/Handson+Technology/view-part/?ref=eda"
-				(at 0 0 0)
-				(effects
-					(font
-						(size 1.27 1.27)
-					)
-					(justify bottom)
-					(hide yes)
-				)
-			)
-			(property "VALUE" ""
 				(at 0 0 0)
 				(effects
 					(font
@@ -1226,16 +1217,6 @@
 	)
 	(wire
 		(pts
-			(xy 125.73 102.87) (xy 124.46 102.87)
-		)
-		(stroke
-			(width 0)
-			(type default)
-		)
-		(uuid "440ab0bb-8101-40f0-b53d-09209ec91be7")
-	)
-	(wire
-		(pts
 			(xy 157.48 99.06) (xy 158.75 99.06)
 		)
 		(stroke
@@ -1243,6 +1224,16 @@
 			(type default)
 		)
 		(uuid "5e4f8997-92bd-4d7a-87f1-3c79e46a9d45")
+	)
+	(wire
+		(pts
+			(xy 124.46 118.11) (xy 125.73 118.11)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "6ef40faa-7a49-49be-aeb8-29ca57839033")
 	)
 	(wire
 		(pts
@@ -7562,7 +7553,7 @@
 	)
 	(global_label "sda"
 		(shape input)
-		(at 125.73 102.87 0)
+		(at 125.73 118.11 0)
 		(fields_autoplaced yes)
 		(effects
 			(font
@@ -7572,7 +7563,7 @@
 		)
 		(uuid "26263dbc-a485-4b35-a9d1-6d811fcbfff9")
 		(property "Intersheetrefs" "${INTERSHEET_REFS}"
-			(at 132.0413 102.87 0)
+			(at 132.0413 118.11 0)
 			(effects
 				(font
 					(size 1.27 1.27)
